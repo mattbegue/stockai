@@ -10,17 +10,17 @@ import tensorflow as tf
 from matplotlib import pyplot as plt
 import holidays
 
-apikey = 'Js_pNztNnUBY8gHcZyl1h5ttjjYuy3p_'
+apikey = open('/Users/mba0330/MLprojects/stockai/apikey.txt','r').read()
 
 #####################################
 #build training data
 #####################################
-trainingdatadir = '/Users/mba0330/MLprojects/StockAI/trainingdata/AAPL/'
+trainingdatadir = '/Users/mba0330/MLprojects/stockai/trainingdata/AAPL/'
 
 starttime = '2019-04-23'
 d = datetime.datetime.strptime(starttime,'%Y-%m-%d')
 with RESTClient(apikey) as client:
-	for k in range(100):
+	for k in range(600):
 		d0str = d.strftime('%Y-%m-%d')
 		d1str = d.strftime('%Y-%m-%d')
 		if (d.weekday()<5) &  (d.date() not in holidays.US()):
@@ -39,6 +39,41 @@ with RESTClient(apikey) as client:
 
 for k in range(10):
  	print((x[k+1]['t']-x[k]['t'])/1000/60)
+
+
+
+
+
+
+trainingfiles = os.listdir(trainingdatadir)
+trainingfiles = glob.glob(os.path.join(trainingdatadir,'*.csv'))
+
+
+trainingchoices = np.random.choice(len(trainingfiles),1)
+x = pd.read_csv(trainingfiles[trainingchoices[0]], index_col=0)
+
+
+
+def get_master_parameters(trainingfiles):
+	import dask.dataframe as dd
+
+
+
+def transformdf(x):
+	y = x.copy()
+	y.v = np.log(x.v)
+	y.t = ((x.t/1000/60/60-5)%24)/24   #Convert from Millissecond Unix to EST Hour
+return y
+
+
+
+
+
+
+
+
+
+
 
 
 
