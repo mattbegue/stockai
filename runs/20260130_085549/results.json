@@ -1,0 +1,26 @@
+{
+  "strategy_metrics": {
+    "total_return_pct": 33.73897211179335,
+    "annualized_return_pct": 33.765605283793306,
+    "volatility_pct": 24.190270787898733,
+    "sharpe_ratio": 1.3958341177679032,
+    "max_drawdown_pct": -16.35031775493908,
+    "win_rate_pct": 49.00398406374502,
+    "trading_days": 252
+  },
+  "spy_metrics": {
+    "total_return": 15.311056462065075,
+    "annualized_return": 15.311056462065075,
+    "volatility": 18.33155201738598,
+    "sharpe": 0.8352296874560206,
+    "max_dd": -18.980650634646135
+  },
+  "trade_stats": {
+    "total_trades": 395,
+    "win_rate": 57.46835443037974,
+    "profit_factor": 1.687863260036894,
+    "avg_trade_pnl": 96.05858657157474,
+    "total_signals": 2083
+  },
+  "final_value": 133605.9043353628
+}

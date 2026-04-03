@@ -1,0 +1,4 @@
+prediction_date,prediction_time,ticker,signal,confidence,entry_price,expected_exit_date,outcome_checked
+2026-03-02,17:16:49,WFC,BUY,0.5539175108561651,82.575,2026-03-07,True
+2026-03-03,07:09:26,WFC,BUY,0.5576795669804038,82.54,2026-03-08,True
+2026-03-05,08:22:54,WFC,BUY,0.5576795669804038,82.54,2026-03-10,True

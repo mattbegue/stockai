@@ -1,0 +1,38 @@
+{
+  "survivorship": {
+    "spy_return": 15.035566583953685,
+    "universe_mean_return": 17.24008399530459,
+    "universe_median_return": 8.992115752960405,
+    "excess_return": 2.2045174113509063,
+    "pct_beating_spy": 38.0,
+    "bias_severity": "MODERATE"
+  },
+  "trades": {
+    "total_trades": 356,
+    "win_rate": 68.82022471910112,
+    "avg_win": 391.5415794393001,
+    "avg_loss": -310.55854122380816
+  },
+  "regimes": {
+    "Bull (SPY <5% from high)": {
+      "days": 202,
+      "avg_daily_return": 0.14826818997560773,
+      "total_return": 34.451299424358275
+    },
+    "Correction (SPY 5-10% down)": {
+      "days": 31,
+      "avg_daily_return": 0.22079196669279152,
+      "total_return": 6.953482802040378
+    },
+    "Bear (SPY >10% down)": {
+      "days": 18,
+      "avg_daily_return": 0.4340315685529672,
+      "total_return": 7.4551785880715205
+    }
+  },
+  "alpha_beta": {
+    "correlation": 0.1227884018613524,
+    "avg_return_profitable_stocks": 18.899921904565606,
+    "avg_return_unprofitable_stocks": 10.600732358260514
+  }
+}

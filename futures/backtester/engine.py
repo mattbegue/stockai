@@ -1,0 +1,299 @@
+"""Main backtesting engine."""
+
+from dataclasses import dataclass, field
+from datetime import date
+from typing import Optional
+
+import pandas as pd
+from tqdm import tqdm
+
+from futures.config import get_settings
+from futures.strategies.base import Strategy, Signal
+from .portfolio import Portfolio
+from .metrics import calculate_metrics, MetricsSummary
+
+
+@dataclass
+class BacktestResult:
+    """Results from a backtest run."""
+
+    strategy_name: str
+    start_date: date
+    end_date: date
+    initial_cash: float
+    final_value: float
+    equity_curve: pd.Series
+    daily_returns: pd.Series
+    trades: pd.DataFrame
+    metrics: MetricsSummary
+    signals_history: pd.DataFrame = field(default_factory=pd.DataFrame)
+
+    @property
+    def total_return(self) -> float:
+        """Total return percentage."""
+        return ((self.final_value - self.initial_cash) / self.initial_cash) * 100
+
+    def summary(self) -> str:
+        """Generate a text summary of results."""
+        lines = [
+            f"Strategy: {self.strategy_name}",
+            f"Period: {self.start_date} to {self.end_date}",
+            f"Initial Capital: ${self.initial_cash:,.2f}",
+            f"Final Value: ${self.final_value:,.2f}",
+            f"Total Return: {self.total_return:.2f}%",
+            f"",
+            f"Performance Metrics:",
+            f"  Sharpe Ratio: {self.metrics.sharpe_ratio:.3f}",
+            f"  Sortino Ratio: {self.metrics.sortino_ratio:.3f}",
+            f"  Max Drawdown: {self.metrics.max_drawdown:.2f}%",
+            f"  Win Rate: {self.metrics.win_rate:.1f}%",
+            f"  Profit Factor: {self.metrics.profit_factor:.2f}",
+            f"  Total Trades: {self.metrics.total_trades}",
+            f"  Avg Trade P&L: ${self.metrics.avg_trade_pnl:.2f}",
+        ]
+        return "\n".join(lines)
+
+
+class Backtester:
+    """
+    Main backtesting engine.
+
+    Simulates trading a strategy over historical data.
+    """
+
+    def __init__(
+        self,
+        strategy: Strategy,
+        initial_cash: Optional[float] = None,
+        transaction_cost_pct: Optional[float] = None,
+        slippage_pct: Optional[float] = None,
+        position_size: float = 0.1,  # 10% of portfolio per position
+        max_positions: int = 10,
+        max_holding_days: Optional[int] = None,
+    ):
+        """
+        Initialize backtester.
+
+        Args:
+            strategy: Trading strategy to test
+            initial_cash: Starting capital
+            transaction_cost_pct: Transaction cost as percentage
+            slippage_pct: Slippage as percentage
+            position_size: Size of each position as fraction of portfolio
+            max_positions: Maximum number of concurrent positions
+            max_holding_days: Maximum days to hold a position (None = no limit)
+        """
+        settings = get_settings()
+
+        self.strategy = strategy
+        self.position_size = position_size
+        self.max_positions = max_positions
+        self.max_holding_days = max_holding_days
+
+        self.portfolio = Portfolio(
+            initial_cash=initial_cash or settings.default_cash,
+            transaction_cost_pct=transaction_cost_pct or settings.transaction_cost_pct,
+            slippage_pct=slippage_pct or settings.slippage_pct,
+        )
+
+    def run(
+        self,
+        data: dict[str, pd.DataFrame],
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        show_progress: bool = True,
+    ) -> BacktestResult:
+        """
+        Run backtest on historical data.
+
+        Args:
+            data: Dict mapping ticker to DataFrame with OHLCV data
+            start_date: Start date for backtest (uses data start if not specified)
+            end_date: End date for backtest (uses data end if not specified)
+            show_progress: Show progress bar
+
+        Returns:
+            BacktestResult with all metrics and history
+        """
+        self.portfolio.reset()
+
+        # Precompute indicators
+        processed_data = {}
+        for ticker, df in data.items():
+            processed_data[ticker] = self.strategy.precompute_indicators(df)
+
+        # Get all unique dates
+        all_dates = set()
+        for df in processed_data.values():
+            all_dates.update(df.index.tolist())
+        all_dates = sorted(all_dates)
+
+        # Apply date filters
+        if start_date:
+            all_dates = [d for d in all_dates if d.date() >= start_date]
+        if end_date:
+            all_dates = [d for d in all_dates if d.date() <= end_date]
+
+        if len(all_dates) < self.strategy.required_history:
+            raise ValueError(
+                f"Not enough data. Need {self.strategy.required_history} bars, "
+                f"got {len(all_dates)}"
+            )
+
+        # Track equity curve
+        equity_curve = []
+        signals_history = []
+
+        iterator = tqdm(all_dates, desc="Backtesting") if show_progress else all_dates
+
+        for current_date in iterator:
+            # Get data up to current date for each ticker
+            current_data = {}
+            current_prices = {}
+
+            for ticker, df in processed_data.items():
+                mask = df.index <= current_date
+                if mask.sum() >= self.strategy.required_history:
+                    current_data[ticker] = df[mask]
+                    current_prices[ticker] = df.loc[current_date, "close"] if current_date in df.index else None
+
+            # Filter out tickers without current price
+            current_prices = {k: v for k, v in current_prices.items() if v is not None}
+
+            if not current_data:
+                continue
+
+            # Update portfolio prices
+            self.portfolio.update_prices(current_prices)
+
+            # Time-based exit: close positions held longer than max_holding_days
+            if self.max_holding_days is not None:
+                self._close_aged_positions(current_prices, current_date)
+
+            # Generate signals
+            signals = self.strategy.generate_signals(current_data)
+
+            # Record signals
+            for ticker, signal in signals.items():
+                if signal != Signal.HOLD:
+                    signals_history.append({
+                        "date": current_date,
+                        "ticker": ticker,
+                        "signal": signal.name,
+                    })
+
+            # Execute trades
+            self._execute_signals(signals, current_prices, current_date)
+
+            # Record equity
+            equity_curve.append({
+                "date": current_date,
+                "equity": self.portfolio.total_value,
+                "cash": self.portfolio.cash,
+                "positions": self.portfolio.position_value,
+            })
+
+        # Close all positions at end
+        final_prices = {
+            ticker: df["close"].iloc[-1]
+            for ticker, df in processed_data.items()
+            if not df.empty
+        }
+        self.portfolio.close_all(final_prices, date=all_dates[-1])
+
+        # Build result
+        equity_df = pd.DataFrame(equity_curve).set_index("date")
+        equity_series = equity_df["equity"]
+
+        daily_returns = equity_series.pct_change().dropna()
+
+        trades_df = self.portfolio.get_trade_history()
+        signals_df = pd.DataFrame(signals_history) if signals_history else pd.DataFrame()
+
+        metrics = calculate_metrics(
+            equity_curve=equity_series,
+            trades=trades_df,
+            initial_cash=self.portfolio.initial_cash,
+        )
+
+        return BacktestResult(
+            strategy_name=self.strategy.name,
+            start_date=all_dates[0].date() if hasattr(all_dates[0], 'date') else all_dates[0],
+            end_date=all_dates[-1].date() if hasattr(all_dates[-1], 'date') else all_dates[-1],
+            initial_cash=self.portfolio.initial_cash,
+            final_value=self.portfolio.total_value,
+            equity_curve=equity_series,
+            daily_returns=daily_returns,
+            trades=trades_df,
+            metrics=metrics,
+            signals_history=signals_df,
+        )
+
+    def _execute_signals(
+        self,
+        signals: dict[str, Signal],
+        prices: dict[str, float],
+        current_date: pd.Timestamp,
+    ):
+        """Execute trading signals."""
+        # First, handle sell signals
+        for ticker, signal in signals.items():
+            if signal == Signal.SELL and ticker in self.portfolio.positions:
+                if ticker in prices:
+                    self.portfolio.sell(ticker, prices[ticker], date=current_date)
+
+        # Then, handle buy signals
+        buy_candidates = [
+            (ticker, prices[ticker])
+            for ticker, signal in signals.items()
+            if signal == Signal.BUY
+            and ticker not in self.portfolio.positions
+            and ticker in prices
+        ]
+
+        # Limit new positions
+        available_slots = self.max_positions - len(self.portfolio.positions)
+        buy_candidates = buy_candidates[:available_slots]
+
+        # Calculate position size
+        if buy_candidates:
+            position_value = self.portfolio.total_value * self.position_size
+
+            for ticker, price in buy_candidates:
+                if self.portfolio.cash < position_value * 0.5:
+                    break
+                self.portfolio.buy(
+                    ticker,
+                    price,
+                    value=min(position_value, self.portfolio.cash * 0.95),
+                    date=current_date,
+                )
+
+    def _close_aged_positions(
+        self,
+        prices: dict[str, float],
+        current_date: pd.Timestamp,
+    ):
+        """Close positions that have exceeded max_holding_days."""
+        if self.max_holding_days is None:
+            return
+
+        positions_to_close = []
+        for ticker, position in self.portfolio.positions.items():
+            days_held = (current_date - position.entry_date).days
+            if days_held >= self.max_holding_days:
+                positions_to_close.append(ticker)
+
+        for ticker in positions_to_close:
+            if ticker in prices:
+                self.portfolio.sell(ticker, prices[ticker], date=current_date)
+
+
+def run_backtest(
+    strategy: Strategy,
+    data: dict[str, pd.DataFrame],
+    **kwargs,
+) -> BacktestResult:
+    """Convenience function to run a backtest."""
+    backtester = Backtester(strategy, **kwargs)
+    return backtester.run(data)
