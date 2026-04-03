@@ -1,6 +1,6 @@
 # Futures
 
-A stock trading backtesting framework with ML capabilities. Fetches market data via Alpaca API, computes technical indicators, and runs trading strategy backtests.
+A stock trading backtesting framework with ML capabilities. Fetches market data via Alpaca API, computes technical indicators, and runs trading strategy backtests. 
 
 ## Features
 
