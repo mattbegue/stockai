@@ -8,6 +8,7 @@ from futures.ml.models import ModelWrapper
 from futures.ml.features import FeatureSet
 from futures.metalabeling.signals import PrimarySignalGenerator
 from futures.metalabeling.features import MetaFeatureEngineering
+from futures.regime.classifier import MarketRegimeClassifier, MarketRegime
 from .base import Strategy, Signal
 
 
@@ -31,6 +32,8 @@ class MetalabelingStrategy(Strategy):
         confidence_threshold: float = 0.6,
         context_tickers: Optional[list[str]] = None,
         feature_names: Optional[list[str]] = None,
+        regime_classifier: Optional[MarketRegimeClassifier] = None,
+        base_position_size: float = 0.10,
     ):
         """
         Initialize the metalabeling strategy.
@@ -42,6 +45,12 @@ class MetalabelingStrategy(Strategy):
             confidence_threshold: Minimum meta-model confidence to take a trade
             context_tickers: ETF tickers for market context features
             feature_names: List of feature names from training (for alignment)
+            regime_classifier: Market regime classifier. When provided:
+                - BEAR: BUY threshold raised to max(threshold, 0.80); capital preserved
+                - BULL: BUY threshold lowered by 10% (capture more edge)
+                - NEUTRAL: threshold unchanged
+            base_position_size: Base position size as fraction of portfolio.
+                Actual size scales with confidence: base × min(conf/threshold, 2.0).
         """
         super().__init__(
             confidence_threshold=confidence_threshold,
@@ -57,11 +66,14 @@ class MetalabelingStrategy(Strategy):
             "SPY", "QQQ", "VXX", "XLF", "XLK", "XLE", "XLV", "XLI", "XLP", "XLY",
             "TLT", "HYG", "GLD",
         ]
-        # Feature names from training for alignment
         self.feature_names = feature_names or meta_model.feature_names
+        self.regime_classifier = regime_classifier
+        self.base_position_size = base_position_size
 
         # Cache for precomputed indicators
         self._indicator_cache: dict[str, pd.DataFrame] = {}
+        # Populated during generate_signals(); read by get_position_sizes()
+        self._last_confidences: dict[str, float] = {}
 
     @property
     def name(self) -> str:
@@ -76,47 +88,61 @@ class MetalabelingStrategy(Strategy):
         """Add indicator columns needed for signal generation and features."""
         return self.signal_generator.compute_indicators(df)
 
+    def _effective_threshold(self, regime: MarketRegime) -> float:
+        """Adjust confidence threshold based on market regime."""
+        if regime == MarketRegime.BEAR:
+            # In bear markets, only take BUY trades we're very confident about
+            return max(self.confidence_threshold, 0.80)
+        elif regime == MarketRegime.BULL:
+            # In bull markets, capture slightly more edge
+            return self.confidence_threshold * 0.90
+        return self.confidence_threshold
+
     def generate_signals(self, data: dict[str, pd.DataFrame]) -> dict[str, Signal]:
         """
         Generate trading signals using metalabeling approach.
 
-        Args:
-            data: Dict mapping ticker to OHLCV DataFrame
-                  Should include both tradeable stocks and context ETFs
+        Signal generation pipeline:
+          1. Classify market regime (if regime_classifier provided)
+          2. Adjust effective confidence threshold for regime
+          3. Run primary signal generator
+          4. Score each candidate with meta-model
+          5. Emit BUY/SELL only when confidence >= effective threshold
 
-        Returns:
-            Dict mapping ticker to Signal
+        Confidence scores are stored in self._last_confidences for downstream
+        position sizing via get_position_sizes().
         """
         signals = {}
+        self._last_confidences = {}
 
         # Separate tradeable stocks from context ETFs
         context_tickers_set = set(self.context_tickers)
-        tradeable_data = {
-            t: df for t, df in data.items() if t not in context_tickers_set
-        }
-        context_data = {
-            t: df for t, df in data.items() if t in context_tickers_set
-        }
+        tradeable_data = {t: df for t, df in data.items() if t not in context_tickers_set}
+        context_data = {t: df for t, df in data.items() if t in context_tickers_set}
+
+        # --- Regime classification ---
+        if self.regime_classifier is not None:
+            regime_reading = self.regime_classifier.classify(data)
+            current_regime = regime_reading.regime
+        else:
+            current_regime = MarketRegime.NEUTRAL
+
+        effective_threshold = self._effective_threshold(current_regime)
 
         # Get primary signals for current bar
         primary_signals = self.signal_generator.get_current_signals(tradeable_data)
 
         for ticker, df in tradeable_data.items():
-            # Default to HOLD
             signals[ticker] = Signal.HOLD
 
             if len(df) < self.required_history:
                 continue
 
-            # Check if primary generator has a signal
             primary_signal, source_indicators = primary_signals.get(ticker, (None, []))
-
             if primary_signal is None:
                 continue
 
-            # Compute features for this signal
             try:
-                # Ensure indicators are computed
                 if ticker in self._indicator_cache:
                     df_with_indicators = self._indicator_cache[ticker]
                 else:
@@ -136,53 +162,57 @@ class MetalabelingStrategy(Strategy):
                 if features.empty:
                     continue
 
-                # Get meta-model prediction
                 feature_df = pd.DataFrame([features]).fillna(0)
 
-                # Align features to training order
                 if self.feature_names:
                     aligned_df = pd.DataFrame(index=feature_df.index)
                     for feat in self.feature_names:
-                        if feat in feature_df.columns:
-                            aligned_df[feat] = feature_df[feat]
-                        else:
-                            aligned_df[feat] = 0  # Missing features get 0
+                        aligned_df[feat] = feature_df[feat] if feat in feature_df.columns else 0
                     feature_df = aligned_df
 
-                # Create FeatureSet for model
                 feature_input = FeatureSet(
                     X=feature_df,
                     feature_names=list(feature_df.columns),
                 )
 
-                # Get probability of profitable trade
                 proba = self.meta_model.predict_proba(feature_input)
+                confidence = float(proba[0, 1] if proba.shape[1] == 2 else proba[0, 0])
 
-                # Binary classification: probability of class 1 (profitable)
-                if proba.shape[1] == 2:
-                    confidence = proba[0, 1]
-                else:
-                    confidence = proba[0, 1] if proba.shape[1] > 1 else proba[0, 0]
+                # Store confidence regardless of whether signal fires
+                self._last_confidences[ticker] = confidence
 
-                # Only take the trade if confidence exceeds threshold
-                if confidence >= self.confidence_threshold:
-                    # Convert from metalabeling Signal enum to strategies Signal enum
+                if confidence >= effective_threshold:
                     if primary_signal.value == 1:
                         signals[ticker] = Signal.BUY
                     elif primary_signal.value == -1:
                         signals[ticker] = Signal.SELL
 
-            except Exception as e:
-                # Log error but don't crash - just skip this ticker
-                # In production, you'd want proper logging here
+            except Exception:
                 continue
 
-        # Context ETFs always HOLD (we don't trade them)
         for ticker in context_tickers_set:
             if ticker in data:
                 signals[ticker] = Signal.HOLD
 
         return signals
+
+    def get_position_sizes(self, signals: dict[str, Signal]) -> dict[str, float]:
+        """
+        Return confidence-scaled position sizes for BUY signals.
+
+        Size = base_position_size × clamp(confidence / threshold, 0.5, 2.0)
+
+        A trade at exactly the threshold gets the base size. A trade with
+        twice the threshold's confidence gets 2× the base size (capped).
+        Trades at 50% above threshold (e.g. 0.90 vs 0.60) get 1.5× base.
+        """
+        sizes = {}
+        for ticker, signal in signals.items():
+            if signal == Signal.BUY and ticker in self._last_confidences:
+                confidence = self._last_confidences[ticker]
+                scale = max(0.5, min(confidence / self.confidence_threshold, 2.0))
+                sizes[ticker] = self.base_position_size * scale
+        return sizes
 
     def get_signal_details(
         self, data: dict[str, pd.DataFrame]

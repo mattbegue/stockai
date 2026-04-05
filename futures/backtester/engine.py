@@ -146,6 +146,7 @@ class Backtester:
 
         # Signals generated at day T's close are executed at day T+1's open.
         pending_signals: dict[str, Signal] = {}
+        pending_sizes: dict[str, float] = {}  # Per-ticker position sizes (fractions)
 
         iterator = tqdm(all_dates, desc="Backtesting") if show_progress else all_dates
 
@@ -169,7 +170,7 @@ class Backtester:
                 if self.max_holding_days is not None:
                     self._close_aged_positions(open_prices, current_date)
                 if pending_signals:
-                    self._execute_signals(pending_signals, open_prices, current_date)
+                    self._execute_signals(pending_signals, open_prices, current_date, pending_sizes)
 
             # --- AT CLOSE: mark-to-market for equity curve ---
             if close_prices:
@@ -178,6 +179,8 @@ class Backtester:
             # Generate signals based on today's full bar; they execute tomorrow.
             if current_data:
                 signals = self.strategy.generate_signals(current_data)
+                # Per-ticker sizes (empty dict → use global self.position_size)
+                pending_sizes = self.strategy.get_position_sizes(signals)
                 pending_signals = signals
 
                 for ticker, signal in signals.items():
@@ -189,6 +192,7 @@ class Backtester:
                         })
             else:
                 pending_signals = {}
+                pending_sizes = {}
 
             # Record equity at close
             equity_curve.append({
@@ -239,40 +243,52 @@ class Backtester:
         signals: dict[str, Signal],
         prices: dict[str, float],
         current_date: pd.Timestamp,
+        position_sizes: Optional[dict[str, float]] = None,
     ):
-        """Execute trading signals."""
+        """
+        Execute trading signals.
+
+        Args:
+            signals: Ticker → Signal mapping
+            prices: Ticker → execution price (next-bar open)
+            current_date: Execution date
+            position_sizes: Optional per-ticker position sizes as portfolio fractions.
+                            Falls back to self.position_size when not provided.
+        """
+        position_sizes = position_sizes or {}
+
         # First, handle sell signals
         for ticker, signal in signals.items():
             if signal == Signal.SELL and ticker in self.portfolio.positions:
                 if ticker in prices:
                     self.portfolio.sell(ticker, prices[ticker], date=current_date)
 
-        # Then, handle buy signals
+        # Then, handle buy signals (sorted by confidence-weighted size, highest first)
         buy_candidates = [
-            (ticker, prices[ticker])
+            (ticker, prices[ticker], position_sizes.get(ticker, self.position_size))
             for ticker, signal in signals.items()
             if signal == Signal.BUY
             and ticker not in self.portfolio.positions
             and ticker in prices
         ]
 
+        # Sort by position size descending (highest-conviction trades first)
+        buy_candidates.sort(key=lambda x: x[2], reverse=True)
+
         # Limit new positions
         available_slots = self.max_positions - len(self.portfolio.positions)
         buy_candidates = buy_candidates[:available_slots]
 
-        # Calculate position size
-        if buy_candidates:
-            position_value = self.portfolio.total_value * self.position_size
-
-            for ticker, price in buy_candidates:
-                if self.portfolio.cash < position_value * 0.5:
-                    break
-                self.portfolio.buy(
-                    ticker,
-                    price,
-                    value=min(position_value, self.portfolio.cash * 0.95),
-                    date=current_date,
-                )
+        for ticker, price, size_fraction in buy_candidates:
+            position_value = self.portfolio.total_value * size_fraction
+            if self.portfolio.cash < position_value * 0.5:
+                break
+            self.portfolio.buy(
+                ticker,
+                price,
+                value=min(position_value, self.portfolio.cash * 0.95),
+                date=current_date,
+            )
 
     def _close_aged_positions(
         self,

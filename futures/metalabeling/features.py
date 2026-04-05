@@ -418,8 +418,48 @@ class MetaFeatureEngineering:
                 else:
                     features["tlt_hyg_spread_5d"] = np.nan
 
-        # Market breadth: % of tradeable universe above 50-SMA
-        # (This would require all tradeable data, so we'll skip for now)
+        # Composite regime score from MarketRegimeClassifier
+        # Reuses the same signals already computed above to avoid redundant lookups.
+        regime_score = 0
+        if "SPY" in context_data:
+            spy_df = context_data["SPY"]
+            if signal_date in spy_df.index:
+                idx = spy_df.index.get_loc(signal_date)
+                spy_close = spy_df["close"]
+                if idx >= 50:
+                    sma50 = spy_close.iloc[idx - 50 : idx + 1].mean()
+                    regime_score += 1 if spy_close.iloc[idx] > sma50 else -1
+                if idx >= 200:
+                    sma200 = spy_close.iloc[idx - 200 : idx + 1].mean()
+                    regime_score += 1 if spy_close.iloc[idx] > sma200 else -1
+                elif idx >= 50:
+                    regime_score += 1 if spy_close.iloc[idx] > sma50 else -1
+                if idx >= 20:
+                    mom = spy_close.iloc[idx] / spy_close.iloc[idx - 20] - 1
+                    regime_score += 1 if mom > 0 else -1
+        if "VXX" in context_data:
+            vxx_df = context_data["VXX"]
+            if signal_date in vxx_df.index:
+                vidx = vxx_df.index.get_loc(signal_date)
+                if vidx >= 63:
+                    vxx_close = vxx_df["close"].iloc[vidx]
+                    vxx_avg = vxx_df["close"].iloc[vidx - 63 : vidx].mean()
+                    regime_score += 1 if vxx_close < vxx_avg else -1
+        if "TLT" in context_data and "HYG" in context_data:
+            tlt_df = context_data["TLT"]
+            hyg_df = context_data["HYG"]
+            if signal_date in tlt_df.index and signal_date in hyg_df.index:
+                tidx = tlt_df.index.get_loc(signal_date)
+                hidx = hyg_df.index.get_loc(signal_date)
+                if tidx >= 10 and hidx >= 10:
+                    tlt_10d = tlt_df["close"].iloc[tidx] / tlt_df["close"].iloc[tidx - 10] - 1
+                    hyg_10d = hyg_df["close"].iloc[hidx] / hyg_df["close"].iloc[hidx - 10] - 1
+                    regime_score += 1 if hyg_10d > tlt_10d else -1
+
+        features["regime_score"] = regime_score
+        # Normalised: BULL=1, NEUTRAL~=0, BEAR=-1
+        features["regime_bull"] = 1 if regime_score >= 2 else 0
+        features["regime_bear"] = 1 if regime_score <= -2 else 0
 
         return features
 
