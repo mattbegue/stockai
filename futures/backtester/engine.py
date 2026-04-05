@@ -144,48 +144,53 @@ class Backtester:
         equity_curve = []
         signals_history = []
 
+        # Signals generated at day T's close are executed at day T+1's open.
+        pending_signals: dict[str, Signal] = {}
+
         iterator = tqdm(all_dates, desc="Backtesting") if show_progress else all_dates
 
         for current_date in iterator:
-            # Get data up to current date for each ticker
+            # Collect open and close prices; build data slice up to current_date.
             current_data = {}
-            current_prices = {}
+            open_prices: dict[str, float] = {}
+            close_prices: dict[str, float] = {}
 
             for ticker, df in processed_data.items():
                 mask = df.index <= current_date
                 if mask.sum() >= self.strategy.required_history:
                     current_data[ticker] = df[mask]
-                    current_prices[ticker] = df.loc[current_date, "close"] if current_date in df.index else None
+                if current_date in df.index:
+                    open_prices[ticker] = df.loc[current_date, "open"]
+                    close_prices[ticker] = df.loc[current_date, "close"]
 
-            # Filter out tickers without current price
-            current_prices = {k: v for k, v in current_prices.items() if v is not None}
+            # --- AT OPEN: execute yesterday's signals and time-based exits ---
+            if open_prices:
+                self.portfolio.update_prices(open_prices)
+                if self.max_holding_days is not None:
+                    self._close_aged_positions(open_prices, current_date)
+                if pending_signals:
+                    self._execute_signals(pending_signals, open_prices, current_date)
 
-            if not current_data:
-                continue
+            # --- AT CLOSE: mark-to-market for equity curve ---
+            if close_prices:
+                self.portfolio.update_prices(close_prices)
 
-            # Update portfolio prices
-            self.portfolio.update_prices(current_prices)
+            # Generate signals based on today's full bar; they execute tomorrow.
+            if current_data:
+                signals = self.strategy.generate_signals(current_data)
+                pending_signals = signals
 
-            # Time-based exit: close positions held longer than max_holding_days
-            if self.max_holding_days is not None:
-                self._close_aged_positions(current_prices, current_date)
+                for ticker, signal in signals.items():
+                    if signal != Signal.HOLD:
+                        signals_history.append({
+                            "date": current_date,
+                            "ticker": ticker,
+                            "signal": signal.name,
+                        })
+            else:
+                pending_signals = {}
 
-            # Generate signals
-            signals = self.strategy.generate_signals(current_data)
-
-            # Record signals
-            for ticker, signal in signals.items():
-                if signal != Signal.HOLD:
-                    signals_history.append({
-                        "date": current_date,
-                        "ticker": ticker,
-                        "signal": signal.name,
-                    })
-
-            # Execute trades
-            self._execute_signals(signals, current_prices, current_date)
-
-            # Record equity
+            # Record equity at close
             equity_curve.append({
                 "date": current_date,
                 "equity": self.portfolio.total_value,

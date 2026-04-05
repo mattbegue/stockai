@@ -31,8 +31,8 @@ def create_metalabels(
         - date: Signal date
         - direction: BUY (1) or SELL (-1)
         - source_indicators: List of indicators that fired
-        - entry_price: Close price on signal date
-        - exit_price: Close price after holding_period days
+        - entry_price: Open price on the trading day after signal date
+        - exit_price: Close price holding_period days after entry
         - forward_return: Actual return over holding period
         - label: 1 if profitable, 0 otherwise
     """
@@ -60,12 +60,17 @@ def create_metalabels(
 
         signal_idx = df.index.get_loc(signal_date)
 
-        # Check if we have enough forward data
-        exit_idx = signal_idx + holding_period
+        # Entry: next trading day's open (signal generated at EOD, order executes next morning)
+        entry_idx = signal_idx + 1
+        if entry_idx >= len(df):
+            continue
+
+        # Exit: close of the holding_period-th day after entry
+        exit_idx = entry_idx + holding_period
         if exit_idx >= len(df):
             continue
 
-        entry_price = df["close"].iloc[signal_idx]
+        entry_price = df["open"].iloc[entry_idx]
         exit_price = df["close"].iloc[exit_idx]
 
         # Calculate return based on direction

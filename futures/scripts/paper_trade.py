@@ -164,7 +164,8 @@ def log_predictions(confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD):
 
         final_signal = detail.get("final_signal")
         if final_signal in ["BUY", "SELL"]:
-            entry_price = data[ticker]["close"].iloc[-1] if ticker in data else None
+            # Record last close as reference; actual entry will be next morning's open
+            ref_price = data[ticker]["close"].iloc[-1] if ticker in data else None
 
             predictions.append({
                 "prediction_date": today.isoformat(),
@@ -172,7 +173,7 @@ def log_predictions(confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD):
                 "ticker": ticker,
                 "signal": final_signal,
                 "confidence": detail.get("confidence"),
-                "entry_price": entry_price,
+                "entry_price": ref_price,  # Reference only; outcome uses next-day open
                 "expected_exit_date": expected_exit.isoformat(),
                 "outcome_checked": False,
             })
@@ -265,18 +266,17 @@ def check_outcomes():
         entry_date = pd.Timestamp(row["prediction_date"])
         expected_exit = pd.Timestamp(row["expected_exit_date"])
 
-        # Find actual entry and exit prices
-        # Entry: close on prediction date (or next available)
-        entry_mask = df.index >= entry_date
+        # Entry: next trading day's open after prediction date
+        # (signal is generated at EOD; market order executes at next morning's open)
+        entry_mask = df.index > entry_date
         if not entry_mask.any():
             continue
         actual_entry_date = df.index[entry_mask][0]
-        entry_price = row["entry_price"] or df.loc[actual_entry_date, "close"]
+        entry_price = df.loc[actual_entry_date, "open"]
 
-        # Exit: close on expected exit date (or next available)
+        # Exit: close on expected exit date (or next available trading day)
         exit_mask = df.index >= expected_exit
         if not exit_mask.any():
-            # Use latest available
             actual_exit_date = df.index[-1]
         else:
             actual_exit_date = df.index[exit_mask][0]
