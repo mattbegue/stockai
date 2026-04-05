@@ -136,16 +136,20 @@ def main():
     print(f"Feature matrix shape: {feature_matrix.shape}")
     print(f"Features: {len(feature_set.feature_names)}")
 
-    # Feature selection: train a quick model to get importance, then select top N
+    # Feature selection: train a quick model to get importance, then select top N.
+    # IMPORTANT: fit only on the first TRAIN_WINDOW samples so feature selection
+    # never sees data that belongs to later walk-forward test folds.
     if TOP_N_FEATURES and TOP_N_FEATURES < len(feature_set.feature_names):
         print(f"\n[4b/6] Selecting top {TOP_N_FEATURES} features...")
         from sklearn.ensemble import GradientBoostingClassifier
 
-        # Quick fit to get feature importance
+        selection_X = feature_set.X.iloc[:TRAIN_WINDOW].values
+        selection_y = feature_set.y.iloc[:TRAIN_WINDOW].values
+
         quick_model = GradientBoostingClassifier(
             n_estimators=50, max_depth=3, random_state=42
         )
-        quick_model.fit(feature_set.X.values, feature_set.y.values)
+        quick_model.fit(selection_X, selection_y)
 
         # Get top N feature indices
         importances = quick_model.feature_importances_

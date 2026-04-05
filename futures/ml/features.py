@@ -272,13 +272,15 @@ class FeatureEngineering:
             threshold: Return threshold for BUY signal
 
         Returns:
-            Series with labels: 1 (BUY), 0 (HOLD), -1 (SELL)
+            Series with labels: 1 (BUY), 0 (HOLD), -1 (SELL).
+            The last `horizon` rows will be NaN — callers must drop them.
         """
         forward_return = df["close"].pct_change(horizon).shift(-horizon)
 
-        labels = pd.Series(0, index=df.index)
+        labels = pd.Series(0, index=df.index, dtype=float)
         labels[forward_return > threshold] = 1
         labels[forward_return < -threshold] = -1
+        labels[forward_return.isna()] = float("nan")  # Surface NaNs; don't hide them as 0
 
         return labels
 

@@ -279,13 +279,18 @@ class Backtester:
         prices: dict[str, float],
         current_date: pd.Timestamp,
     ):
-        """Close positions that have exceeded max_holding_days."""
+        """Close positions that have exceeded max_holding_days (in trading days)."""
         if self.max_holding_days is None:
             return
 
+        import numpy as np
+
         positions_to_close = []
         for ticker, position in self.portfolio.positions.items():
-            days_held = (current_date - position.entry_date).days
+            # Count business days held so results are independent of weekend placement
+            days_held = int(np.busday_count(
+                position.entry_date.date(), current_date.date()
+            ))
             if days_held >= self.max_holding_days:
                 positions_to_close.append(ticker)
 

@@ -354,10 +354,10 @@ class MetaFeatureEngineering:
             if signal_date in spy_df.index:
                 idx = spy_df.index.get_loc(signal_date)
 
-                # SPY returns (use prior bar to avoid lookahead)
+                # SPY returns — signals are generated at EOD, so today's close is available.
                 for period in (5, 10, 20):
-                    if idx >= period + 1:
-                        ret = spy_df["close"].iloc[idx - 1] / spy_df["close"].iloc[idx - 1 - period] - 1
+                    if idx >= period:
+                        ret = spy_df["close"].iloc[idx] / spy_df["close"].iloc[idx - period] - 1
                         features[f"spy_return_{period}d"] = ret * 100
                     else:
                         features[f"spy_return_{period}d"] = np.nan
@@ -396,8 +396,8 @@ class MetaFeatureEngineering:
             sector_df = context_data[sector_etf]
             if signal_date in sector_df.index:
                 idx = sector_df.index.get_loc(signal_date)
-                if idx >= 6:
-                    ret = sector_df["close"].iloc[idx - 1] / sector_df["close"].iloc[idx - 1 - 5] - 1
+                if idx >= 5:
+                    ret = sector_df["close"].iloc[idx] / sector_df["close"].iloc[idx - 5] - 1
                     features["sector_return_5d"] = ret * 100
                 else:
                     features["sector_return_5d"] = np.nan
