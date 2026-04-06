@@ -5,8 +5,10 @@ from typing import Optional
 
 import pandas as pd
 
-from futures.indicators.momentum import RSI, MACD, BollingerBands
-from futures.indicators.moving_averages import SMA
+import numpy as np
+
+from futures.indicators.momentum import RSI, MACD, BollingerBands, Stochastic, ROC
+from futures.indicators.moving_averages import SMA, VWAP
 from enum import Enum
 
 
@@ -51,34 +53,58 @@ class PrimarySignalGenerator:
         macd_signal: int = 9,
         bb_period: int = 20,
         bb_std: float = 2.0,
+        stoch_k: int = 14,
+        stoch_d: int = 3,
+        stoch_oversold: float = 30.0,
+        stoch_overbought: float = 70.0,
+        roc_period: int = 10,
+        roc_threshold: float = 3.0,
+        vwap_period: int = 20,
+        vwap_band: float = 0.01,
+        volume_breakout_period: int = 20,
+        volume_breakout_multiplier: float = 1.5,
+        obv_sma_period: int = 20,
     ):
         """
         Initialize the signal generator with indicator parameters.
 
-        Args:
-            sma_fast: Fast SMA period for crossover
-            sma_slow: Slow SMA period for crossover
-            rsi_period: RSI lookback period
-            rsi_oversold: RSI threshold for oversold (buy signal)
-            rsi_overbought: RSI threshold for overbought (sell signal)
-            macd_fast: MACD fast EMA period
-            macd_slow: MACD slow EMA period
-            macd_signal: MACD signal line period
-            bb_period: Bollinger Bands period
-            bb_std: Bollinger Bands standard deviation multiplier
+        Original signals (4):
+            sma_fast/slow: SMA crossover parameters
+            rsi_*: RSI extreme parameters
+            macd_*: MACD crossover parameters
+            bb_*: Bollinger Band touch parameters
+
+        New signals (5, P2-S1):
+            stoch_*: Stochastic %K/%D crossover in oversold/overbought zones
+            roc_*: ROC momentum reversal (zero-cross from extreme)
+            vwap_*: VWAP mean-reversion cross with minimum displacement band
+            volume_breakout_*: Price breakout above N-day high with volume confirmation
+            obv_sma_period: OBV crosses its own N-day SMA (volume-trend shift)
         """
         self.sma_fast_period = sma_fast
         self.sma_slow_period = sma_slow
         self.rsi_period = rsi_period
         self.rsi_oversold = rsi_oversold
         self.rsi_overbought = rsi_overbought
+        self.stoch_oversold = stoch_oversold
+        self.stoch_overbought = stoch_overbought
+        self.roc_threshold = roc_threshold
+        self.vwap_band = vwap_band
+        self.volume_breakout_period = volume_breakout_period
+        self.volume_breakout_multiplier = volume_breakout_multiplier
+        self.obv_sma_period = obv_sma_period
 
-        # Initialize indicators
+        # Original indicators
         self.sma_fast = SMA(period=sma_fast)
         self.sma_slow = SMA(period=sma_slow)
         self.rsi = RSI(period=rsi_period)
         self.macd = MACD(fast_period=macd_fast, slow_period=macd_slow, signal_period=macd_signal)
         self.bb = BollingerBands(period=bb_period, std_dev=bb_std)
+
+        # New indicators (P2-S1)
+        self.stoch = Stochastic(k_period=stoch_k, d_period=stoch_d)
+        self.roc = ROC(period=roc_period)
+        self.vwap = VWAP(period=vwap_period)
 
     @property
     def required_history(self) -> int:
@@ -116,6 +142,29 @@ class PrimarySignalGenerator:
         result["bb_lower"] = bb_df["lower"]
         result["bb_middle"] = bb_df["middle"]
         result["bb_pct_b"] = bb_df["pct_b"]
+
+        # --- New indicators (P2-S1) ---
+
+        # Stochastic %K and %D
+        stoch_df = self.stoch(df)
+        result["stoch_k"] = stoch_df["k"]
+        result["stoch_d"] = stoch_df["d"]
+
+        # Rate of Change
+        result["roc"] = self.roc(df)
+
+        # Rolling VWAP
+        result["vwap"] = self.vwap(df)
+
+        # OBV and its SMA — OBV is cumulative so computed inline
+        price_diff = df["close"].diff()
+        vol_signed = df["volume"] * np.sign(price_diff).fillna(0)
+        result["obv"] = vol_signed.cumsum()
+        result["obv_sma"] = result["obv"].rolling(window=self.obv_sma_period).mean()
+
+        # Volume rolling stats for breakout check
+        result["vol_avg"] = df["volume"].rolling(window=self.volume_breakout_period).mean()
+        result["high_nd"] = df["close"].rolling(window=self.volume_breakout_period).max().shift(1)
 
         return result
 
@@ -219,6 +268,122 @@ class PrimarySignalGenerator:
 
         return None, ""
 
+    def _check_stochastic_crossover(
+        self, df: pd.DataFrame, idx: int
+    ) -> tuple[Optional[Signal], str]:
+        """Stochastic %K crosses %D while inside oversold / overbought zone."""
+        if idx < 1:
+            return None, ""
+
+        k_curr = df["stoch_k"].iloc[idx]
+        k_prev = df["stoch_k"].iloc[idx - 1]
+        d_curr = df["stoch_d"].iloc[idx]
+        d_prev = df["stoch_d"].iloc[idx - 1]
+
+        if any(pd.isna(v) for v in [k_curr, k_prev, d_curr, d_prev]):
+            return None, ""
+
+        # Bullish: %K crosses above %D while in oversold territory
+        if k_prev <= d_prev and k_curr > d_curr and k_curr < self.stoch_oversold:
+            return Signal.BUY, "stoch_crossover"
+
+        # Bearish: %K crosses below %D while in overbought territory
+        if k_prev >= d_prev and k_curr < d_curr and k_curr > self.stoch_overbought:
+            return Signal.SELL, "stoch_crossover"
+
+        return None, ""
+
+    def _check_volume_breakout(
+        self, df: pd.DataFrame, idx: int
+    ) -> tuple[Optional[Signal], str]:
+        """Price breaks N-day high on above-average volume (momentum breakout)."""
+        if idx < self.volume_breakout_period:
+            return None, ""
+
+        close = df["close"].iloc[idx]
+        high_nd = df["high_nd"].iloc[idx]   # prior N-day high (shift(1) applied in compute)
+        vol = df["volume"].iloc[idx]
+        vol_avg = df["vol_avg"].iloc[idx]
+
+        if pd.isna(high_nd) or pd.isna(vol_avg) or vol_avg == 0:
+            return None, ""
+
+        if close > high_nd and vol > self.volume_breakout_multiplier * vol_avg:
+            return Signal.BUY, "volume_breakout"
+
+        return None, ""
+
+    def _check_obv_cross(
+        self, df: pd.DataFrame, idx: int
+    ) -> tuple[Optional[Signal], str]:
+        """OBV crosses its own N-day SMA — signals volume trend shift."""
+        if idx < 1:
+            return None, ""
+
+        obv_curr = df["obv"].iloc[idx]
+        obv_prev = df["obv"].iloc[idx - 1]
+        sma_curr = df["obv_sma"].iloc[idx]
+        sma_prev = df["obv_sma"].iloc[idx - 1]
+
+        if any(pd.isna(v) for v in [obv_curr, obv_prev, sma_curr, sma_prev]):
+            return None, ""
+
+        if obv_prev <= sma_prev and obv_curr > sma_curr:
+            return Signal.BUY, "obv_cross"
+
+        if obv_prev >= sma_prev and obv_curr < sma_curr:
+            return Signal.SELL, "obv_cross"
+
+        return None, ""
+
+    def _check_roc_reversal(
+        self, df: pd.DataFrame, idx: int
+    ) -> tuple[Optional[Signal], str]:
+        """ROC zero-crosses from an extreme, signalling momentum exhaustion reversal."""
+        if idx < 1:
+            return None, ""
+
+        roc_curr = df["roc"].iloc[idx]
+        roc_prev = df["roc"].iloc[idx - 1]
+
+        if pd.isna(roc_curr) or pd.isna(roc_prev):
+            return None, ""
+
+        # BUY: coming from meaningfully negative ROC, now crossing zero
+        if roc_prev < -self.roc_threshold and roc_curr >= 0:
+            return Signal.BUY, "roc_reversal"
+
+        # SELL: coming from meaningfully positive ROC, now crossing zero
+        if roc_prev > self.roc_threshold and roc_curr <= 0:
+            return Signal.SELL, "roc_reversal"
+
+        return None, ""
+
+    def _check_vwap_cross(
+        self, df: pd.DataFrame, idx: int
+    ) -> tuple[Optional[Signal], str]:
+        """Price crosses VWAP from a displaced position (mean reversion)."""
+        if idx < 1:
+            return None, ""
+
+        close_curr = df["close"].iloc[idx]
+        close_prev = df["close"].iloc[idx - 1]
+        vwap_curr = df["vwap"].iloc[idx]
+        vwap_prev = df["vwap"].iloc[idx - 1]
+
+        if pd.isna(vwap_curr) or pd.isna(vwap_prev) or vwap_prev == 0:
+            return None, ""
+
+        # BUY: price was at least band% below VWAP, now crosses above
+        if close_prev < vwap_prev * (1 - self.vwap_band) and close_curr > vwap_curr:
+            return Signal.BUY, "vwap_cross"
+
+        # SELL: price was at least band% above VWAP, now crosses below
+        if close_prev > vwap_prev * (1 + self.vwap_band) and close_curr < vwap_curr:
+            return Signal.SELL, "vwap_cross"
+
+        return None, ""
+
     def generate_signals_for_ticker(
         self, ticker: str, df: pd.DataFrame
     ) -> list[CandidateSignal]:
@@ -254,6 +419,11 @@ class PrimarySignalGenerator:
                 self._check_rsi_extreme,
                 self._check_macd_crossover,
                 self._check_bb_touch,
+                self._check_stochastic_crossover,
+                self._check_volume_breakout,
+                self._check_obv_cross,
+                self._check_roc_reversal,
+                self._check_vwap_cross,
             ]:
                 signal, source = check_fn(df_with_indicators, idx)
                 if signal == Signal.BUY:
@@ -343,6 +513,11 @@ class PrimarySignalGenerator:
                 self._check_rsi_extreme,
                 self._check_macd_crossover,
                 self._check_bb_touch,
+                self._check_stochastic_crossover,
+                self._check_volume_breakout,
+                self._check_obv_cross,
+                self._check_roc_reversal,
+                self._check_vwap_cross,
             ]:
                 signal, source = check_fn(df_with_indicators, idx)
                 if signal == Signal.BUY:

@@ -280,10 +280,17 @@ class MetaFeatureEngineering:
 
         # Number of indicators agreeing
         features["num_indicators"] = len(source_indicators)
+        # Original signal flags
         features["has_sma_crossover"] = 1 if "sma_crossover" in source_indicators else 0
         features["has_rsi_signal"] = 1 if any("rsi" in s for s in source_indicators) else 0
         features["has_macd_crossover"] = 1 if "macd_crossover" in source_indicators else 0
         features["has_bb_touch"] = 1 if any("bb" in s for s in source_indicators) else 0
+        # New signal flags (P2-S1) — zero-padded for current model; used in next retrain
+        features["has_stoch_crossover"] = 1 if "stoch_crossover" in source_indicators else 0
+        features["has_volume_breakout"] = 1 if "volume_breakout" in source_indicators else 0
+        features["has_obv_cross"] = 1 if "obv_cross" in source_indicators else 0
+        features["has_roc_reversal"] = 1 if "roc_reversal" in source_indicators else 0
+        features["has_vwap_cross"] = 1 if "vwap_cross" in source_indicators else 0
 
         # Signal direction
         features["direction"] = direction
