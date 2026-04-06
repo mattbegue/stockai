@@ -110,6 +110,16 @@ class Strategy(ABC):
         """
         return df
 
+    def get_position_sizes(self, signals: dict[str, "Signal"]) -> dict[str, float]:
+        """
+        Optional: return per-ticker position sizes (as portfolio fractions).
+
+        Called by the backtester immediately after generate_signals(). Return
+        an empty dict to use the backtester's global position_size for all
+        tickers. Strategies that support confidence-based sizing override this.
+        """
+        return {}
+
     def __repr__(self) -> str:
         params_str = ", ".join(f"{k}={v}" for k, v in self.params.items())
         return f"{self.__class__.__name__}({params_str})"

@@ -12,10 +12,14 @@ from .base import Strategy, Signal, FilterStrategy
 
 class MLStrategy(Strategy):
     """
-    ML-based trading strategy.
+    ML-based trading strategy (prototype / secondary path).
 
     Uses a trained classifier to generate trading signals.
     Can be combined with filter strategies for two-stage screening.
+
+    NOTE: This is not the primary production path. The production pipeline
+    uses MetalabelingStrategy + MetaFeatureEngineering. MLStrategy lacks
+    the embargo enforcement and rigorous walk-forward isolation of that path.
     """
 
     def __init__(
