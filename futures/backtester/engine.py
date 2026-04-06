@@ -70,6 +70,8 @@ class Backtester:
         position_size: float = 0.1,  # 10% of portfolio per position
         max_positions: int = 10,
         max_holding_days: Optional[int] = None,
+        profit_target: Optional[float] = None,
+        stop_loss: Optional[float] = None,
     ):
         """
         Initialize backtester.
@@ -82,6 +84,10 @@ class Backtester:
             position_size: Size of each position as fraction of portfolio
             max_positions: Maximum number of concurrent positions
             max_holding_days: Maximum days to hold a position (None = no limit)
+            profit_target: Exit long when price rises this fraction above entry
+                           (mirrors the triple barrier upper barrier). None = disabled.
+            stop_loss: Exit long when price falls this fraction below entry
+                       (mirrors the triple barrier lower barrier). None = disabled.
         """
         settings = get_settings()
 
@@ -89,6 +95,8 @@ class Backtester:
         self.position_size = position_size
         self.max_positions = max_positions
         self.max_holding_days = max_holding_days
+        self.profit_target = profit_target
+        self.stop_loss = stop_loss
 
         self.portfolio = Portfolio(
             initial_cash=initial_cash or settings.default_cash,
@@ -155,6 +163,8 @@ class Backtester:
             current_data = {}
             open_prices: dict[str, float] = {}
             close_prices: dict[str, float] = {}
+            high_prices: dict[str, float] = {}
+            low_prices: dict[str, float] = {}
 
             for ticker, df in processed_data.items():
                 mask = df.index <= current_date
@@ -163,12 +173,20 @@ class Backtester:
                 if current_date in df.index:
                     open_prices[ticker] = df.loc[current_date, "open"]
                     close_prices[ticker] = df.loc[current_date, "close"]
+                    high_prices[ticker] = df.loc[current_date, "high"]
+                    low_prices[ticker] = df.loc[current_date, "low"]
 
-            # --- AT OPEN: execute yesterday's signals and time-based exits ---
+            # --- AT OPEN: execute yesterday's signals and all exit checks ---
             if open_prices:
                 self.portfolio.update_prices(open_prices)
+                # Time-based exits first
                 if self.max_holding_days is not None:
                     self._close_aged_positions(open_prices, current_date)
+                # Barrier exits (profit target / stop loss) — consistent with triple barrier labels
+                if self.profit_target is not None or self.stop_loss is not None:
+                    self._close_barrier_positions(
+                        open_prices, high_prices, low_prices, current_date
+                    )
                 if pending_signals:
                     self._execute_signals(pending_signals, open_prices, current_date, pending_sizes)
 
@@ -313,6 +331,55 @@ class Backtester:
         for ticker in positions_to_close:
             if ticker in prices:
                 self.portfolio.sell(ticker, prices[ticker], date=current_date)
+
+
+    def _close_barrier_positions(
+        self,
+        open_prices: dict[str, float],
+        high_prices: dict[str, float],
+        low_prices: dict[str, float],
+        current_date: pd.Timestamp,
+    ):
+        """Close positions that hit a profit target or stop loss.
+
+        Barrier priority matches labels.py (pessimistic / conservative):
+          1. Stop loss takes priority when both barriers breach the same bar.
+          2. Gap-through open: exit at open (no better fill available).
+          3. Intraday breach: exit at exact barrier price.
+
+        Only long positions are supported (strategy is long-only).
+        """
+        positions_to_close: list[tuple[str, float]] = []
+
+        for ticker, position in self.portfolio.positions.items():
+            entry = position.entry_price
+            target = entry * (1.0 + self.profit_target) if self.profit_target is not None else float("inf")
+            stop = entry * (1.0 - self.stop_loss) if self.stop_loss is not None else 0.0
+
+            current_open = open_prices.get(ticker)
+            if current_open is None:
+                continue
+
+            # Gap scenarios: open already beyond a barrier
+            if current_open <= stop:
+                positions_to_close.append((ticker, current_open))
+                continue
+            if current_open >= target:
+                positions_to_close.append((ticker, current_open))
+                continue
+
+            # Intraday check — stop loss first (pessimistic)
+            bar_low = low_prices.get(ticker)
+            bar_high = high_prices.get(ticker)
+
+            if bar_low is not None and bar_low <= stop:
+                positions_to_close.append((ticker, stop))
+                continue
+            if bar_high is not None and bar_high >= target:
+                positions_to_close.append((ticker, target))
+
+        for ticker, exit_price in positions_to_close:
+            self.portfolio.sell(ticker, exit_price, date=current_date)
 
 
 def run_backtest(

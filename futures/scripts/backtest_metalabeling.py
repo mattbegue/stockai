@@ -848,6 +848,10 @@ def main():
 
     print(f"  Tickers with sufficient data: {len(test_data)}")
 
+    # Load barrier params from model metadata (triple barrier consistency)
+    MODEL_PROFIT_TARGET = model_info.get("profit_target")
+    MODEL_STOP_LOSS = model_info.get("stop_loss")
+
     # Create strategy
     print("\nInitializing strategy...")
     signal_gen = PrimarySignalGenerator()
@@ -876,6 +880,8 @@ def main():
             "test_end": str(end_date.date()),
             "test_period_days": TEST_PERIOD_DAYS,
             "max_holding_days": MAX_HOLDING_DAYS,
+            "profit_target": MODEL_PROFIT_TARGET,
+            "stop_loss": MODEL_STOP_LOSS,
             "n_tickers": len(test_data),
         },
         "model": {
@@ -884,6 +890,9 @@ def main():
             "n_features": len(model_info.get("feature_names", [])),
             "holding_period": model_info.get("holding_period"),
             "min_return_threshold": model_info.get("min_return"),
+            "profit_target": MODEL_PROFIT_TARGET,
+            "stop_loss": MODEL_STOP_LOSS,
+            "is_calibrated": model_info.get("is_calibrated", False),
         },
         "universe": {
             "tradeable": universe.tradeable,
@@ -898,10 +907,16 @@ def main():
         print(f"  Time-based exit: {MAX_HOLDING_DAYS} days")
     else:
         print("  Time-based exit: DISABLED")
+    if MODEL_PROFIT_TARGET:
+        print(f"  Profit target:   {MODEL_PROFIT_TARGET:.1%}")
+    if MODEL_STOP_LOSS:
+        print(f"  Stop loss:       {MODEL_STOP_LOSS:.1%}")
     bt = Backtester(
         strategy=strategy,
         initial_cash=INITIAL_CASH,
         max_holding_days=MAX_HOLDING_DAYS,
+        profit_target=MODEL_PROFIT_TARGET,
+        stop_loss=MODEL_STOP_LOSS,
     )
     result = bt.run(test_data, show_progress=True)
 
