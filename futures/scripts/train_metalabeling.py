@@ -60,7 +60,9 @@ def main():
 
     # Configuration
     HOLDING_PERIOD = 5
-    MIN_RETURN = 0.003  # 0.3% to cover costs
+    MIN_RETURN = 0.003    # 0.3% to cover costs (vertical barrier threshold)
+    PROFIT_TARGET = 0.04  # 4% upper barrier (meaningful multi-day move)
+    STOP_LOSS = 0.025     # 2.5% lower barrier (outside normal intraday noise)
     TRAIN_WINDOW = 252 * 2  # 2 years
     TEST_WINDOW = 63  # 1 quarter
     EMBARGO_DAYS = 90  # 3 months separation between training and backtest
@@ -98,6 +100,8 @@ def main():
         candidates,
         holding_period=HOLDING_PERIOD,
         min_return=MIN_RETURN,
+        profit_target=PROFIT_TARGET,
+        stop_loss=STOP_LOSS,
     )
 
     stats = get_label_statistics(labeled_df)
@@ -249,12 +253,31 @@ def main():
         print(f"  Recall: {metrics.recall:.3f}")
         print(f"  F1 Score: {metrics.f1:.3f}")
 
-    # 6. Train final model on all data
+    # 6. Train final model on all data, then calibrate probabilities (P2-1)
     print("\n[6/6] Training final model on all data...")
-    final_model = create_model(MODEL_TYPE)
-    final_model.fit(feature_set)
+    CALIB_FRAC = 0.20  # Last 20% of training data reserved for calibration
+    n_calib = int(len(feature_set.X) * CALIB_FRAC)
+    n_train_final = len(feature_set.X) - n_calib
 
-    # Feature importance
+    train_final_set = FeatureSet(
+        X=feature_set.X.iloc[:n_train_final],
+        y=feature_set.y.iloc[:n_train_final],
+        feature_names=feature_set.feature_names,
+    )
+    calib_set = FeatureSet(
+        X=feature_set.X.iloc[n_train_final:],
+        y=feature_set.y.iloc[n_train_final:],
+        feature_names=feature_set.feature_names,
+    )
+
+    final_model = create_model(MODEL_TYPE)
+    final_model.fit(train_final_set)
+
+    print(f"\n  Calibrating probabilities (isotonic, n={n_calib:,} samples)...")
+    final_model.calibrate(calib_set, method="isotonic")
+    print("  Calibration complete.")
+
+    # Feature importance (from base model before calibration wrapping)
     print("\nTop 15 most important features:")
     top_features = final_model.get_top_features(n=15)
     for i, (name, importance) in enumerate(top_features, 1):
@@ -268,6 +291,8 @@ def main():
         "feature_names": feature_set.feature_names,
         "holding_period": HOLDING_PERIOD,
         "min_return": MIN_RETURN,
+        "profit_target": PROFIT_TARGET,
+        "stop_loss": STOP_LOSS,
         "training_date": date.today().isoformat(),
         "training_end_date": training_cutoff_date.date().isoformat(),
         "embargo_end_date": embargo_end_date.date().isoformat(),
@@ -276,6 +301,9 @@ def main():
         "n_features": len(feature_set.feature_names),
         "model_type": MODEL_TYPE,
         "top_n_features": TOP_N_FEATURES,
+        "is_calibrated": True,
+        "calibration_method": "isotonic",
+        "calibration_frac": CALIB_FRAC,
         "universe_tradeable": universe.tradeable,
         "universe_context": universe.context,
     }
