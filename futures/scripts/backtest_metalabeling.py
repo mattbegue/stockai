@@ -723,6 +723,24 @@ def main():
         default=0.60,
         help="Confidence threshold for trade signals (default: 0.60)",
     )
+    parser.add_argument(
+        "--register",
+        action="store_true",
+        help="Record this run in the backtest registry (backtest_registry.json)",
+    )
+    parser.add_argument(
+        "--comment",
+        type=str,
+        default="",
+        help="Comment to attach when registering (describes what changed)",
+    )
+    parser.add_argument(
+        "--tag",
+        action="append",
+        dest="tags",
+        default=[],
+        help="Tag for this run (can repeat: --tag baseline --tag phase2)",
+    )
     args = parser.parse_args()
 
     print("=" * 70)
@@ -1023,6 +1041,38 @@ def main():
     print(f"\n{'=' * 70}")
     print(f"Results saved to: {run_dir}")
     print(f"{'=' * 70}")
+
+    # Optionally record to the backtest registry
+    if args.register:
+        from futures.scripts.backtest_registry import record, print_comparison_table
+
+        registry_metrics = {
+            **strategy_metrics,
+            "spy_total_return_pct": spy_metrics.get("total_return", None),
+            "spy_sharpe_ratio":     spy_metrics.get("sharpe", None),
+            "total_trades":         result.metrics.total_trades,
+            "win_rate_pct":         result.metrics.win_rate,
+            "profit_factor":        result.metrics.profit_factor,
+        }
+        registry_params = {
+            "universe":             universe.name,
+            "model_name":           model_info.get("training_date", "unknown"),
+            "start_date":           str(test_start.date()),
+            "end_date":             str(end_date.date()),
+            "confidence_threshold": CONFIDENCE_THRESHOLD,
+            "max_holding_days":     MAX_HOLDING_DAYS,
+            "initial_cash":         INITIAL_CASH,
+            "n_tickers":            len(test_data),
+            "run_dir":              str(run_dir),
+        }
+        run_id = record(
+            metrics=registry_metrics,
+            params=registry_params,
+            comment=args.comment,
+            tags=args.tags or [],
+        )
+        print(f"\n✓ Registered as: {run_id}")
+        print_comparison_table()
 
     return result, strategy_metrics, run_dir
 

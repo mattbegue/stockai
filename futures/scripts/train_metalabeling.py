@@ -41,6 +41,17 @@ def main():
         default=10,
         help="Number of top features to use (0 = use all)",
     )
+    parser.add_argument(
+        "--train-end-date",
+        type=str,
+        default=None,
+        help=(
+            "Hard cutoff for training data (YYYY-MM-DD). "
+            "Embargo is still applied on top of this. "
+            "Use this to reserve a long clean test window for backtesting. "
+            "Example: --train-end-date 2024-07-01 reserves 2025-01-01+ for testing."
+        ),
+    )
     args = parser.parse_args()
 
     print("=" * 60)
@@ -97,16 +108,27 @@ def main():
     print(f"  Avg return (profitable): {stats['avg_return_profitable']:.2f}%")
     print(f"  Avg return (unprofitable): {stats['avg_return_unprofitable']:.2f}%")
 
-    # Determine training cutoff date (embargo period before end of data)
+    # Determine training cutoff date
     all_signal_dates = labeled_df["date"].sort_values()
     latest_signal_date = all_signal_dates.iloc[-1]
-    training_cutoff_date = latest_signal_date - pd.Timedelta(days=EMBARGO_DAYS)
+
+    if args.train_end_date:
+        # User-specified hard cutoff — embargo is applied on top to set the test-start date
+        hard_cutoff = pd.Timestamp(args.train_end_date)
+        training_cutoff_date = hard_cutoff
+        embargo_end_date = hard_cutoff + pd.Timedelta(days=EMBARGO_DAYS)
+        print(f"\nUsing user-specified train-end-date: {hard_cutoff.date()}")
+        print(f"  Embargo adds {EMBARGO_DAYS} days → clean test starts: {embargo_end_date.date()}")
+    else:
+        # Default: auto-embargo from the latest available signal
+        training_cutoff_date = latest_signal_date - pd.Timedelta(days=EMBARGO_DAYS)
+        embargo_end_date = latest_signal_date
 
     # Filter labeled data for training only (exclude embargo period)
     train_labeled_df = labeled_df[labeled_df["date"] <= training_cutoff_date].copy()
     print(f"\nTraining data separation:")
     print(f"  Training cutoff: {training_cutoff_date.date()}")
-    print(f"  Embargo ends: {latest_signal_date.date()}")
+    print(f"  Embargo ends:    {embargo_end_date.date()}")
     print(f"  Training signals: {len(train_labeled_df):,} (excluded {len(labeled_df) - len(train_labeled_df):,} recent)")
 
     if len(train_labeled_df) < TRAIN_WINDOW:
@@ -248,7 +270,7 @@ def main():
         "min_return": MIN_RETURN,
         "training_date": date.today().isoformat(),
         "training_end_date": training_cutoff_date.date().isoformat(),
-        "embargo_end_date": latest_signal_date.date().isoformat(),
+        "embargo_end_date": embargo_end_date.date().isoformat(),
         "embargo_days": EMBARGO_DAYS,
         "n_samples": len(feature_set.X),
         "n_features": len(feature_set.feature_names),
