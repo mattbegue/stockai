@@ -162,6 +162,11 @@ class MetalabelingStrategy(Strategy):
                 if features.empty:
                     continue
 
+                # Hard earnings filter (P2-4): skip any signal whose holding
+                # window straddles an earnings release — jump risk dominates
+                if features.get("earnings_within_hold", 0.0) == 1.0:
+                    continue
+
                 feature_df = pd.DataFrame([features]).fillna(0)
 
                 if self.feature_names:

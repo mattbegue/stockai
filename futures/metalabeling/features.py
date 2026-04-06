@@ -195,6 +195,8 @@ class MetaFeatureEngineering:
         self,
         context_tickers: Optional[list[str]] = None,
         lookback_periods: tuple[int, ...] = (5, 10, 20),
+        earnings_calendar=None,
+        holding_period: int = 5,
     ):
         """
         Initialize the feature engineering pipeline.
@@ -202,12 +204,19 @@ class MetaFeatureEngineering:
         Args:
             context_tickers: List of ETF tickers for market context
             lookback_periods: Periods for momentum calculations
+            earnings_calendar: Optional EarningsCalendar instance. When provided,
+                               adds `days_to_earnings` and `earnings_within_hold`
+                               features to each signal.
+            holding_period: Expected holding period in trading days (matches the
+                            triple barrier time limit). Used for earnings risk window.
         """
         self.context_tickers = context_tickers or [
             "SPY", "QQQ", "VXX", "XLF", "XLK", "XLE", "XLV", "XLI", "XLP", "XLY",
             "XLU", "TLT", "HYG", "GLD",
         ]
         self.lookback_periods = lookback_periods
+        self.earnings_calendar = earnings_calendar
+        self.holding_period = holding_period
 
         # Initialize indicators
         self.rsi = RSI(period=14)
@@ -527,6 +536,21 @@ class MetaFeatureEngineering:
 
         # Market context features
         features.update(self._get_context_features(context_data, signal_date, ticker))
+
+        # Earnings risk features (P2-4) — only when calendar is available
+        if self.earnings_calendar is not None and self.earnings_calendar.has_data(ticker):
+            features["days_to_earnings"] = self.earnings_calendar.days_to_next(
+                ticker, signal_date
+            )
+            features["earnings_within_hold"] = float(
+                self.earnings_calendar.within_hold(
+                    ticker, signal_date, holding_days=self.holding_period
+                )
+            )
+        else:
+            # Neutral sentinel values when no earnings data is available
+            features["days_to_earnings"] = 45.0   # assume mid-cycle
+            features["earnings_within_hold"] = 0.0
 
         return pd.Series(features)
 

@@ -13,6 +13,7 @@ import numpy as np
 
 from futures.config import get_universe, TickerUniverse, get_sector_map
 from futures.data.fetcher import DataManager
+from futures.data.earnings import EarningsCalendar
 from futures.strategies import MetalabelingStrategy
 from futures.metalabeling import PrimarySignalGenerator, MetaFeatureEngineering
 from futures.backtester import Backtester
@@ -856,7 +857,19 @@ def main():
     # Create strategy
     print("\nInitializing strategy...")
     signal_gen = PrimarySignalGenerator()
-    feature_eng = MetaFeatureEngineering(context_tickers=universe.context)
+
+    # Load earnings calendar (P2-4)
+    print("  Loading earnings calendar...")
+    earnings_cal = EarningsCalendar()
+    earnings_cal.load(universe.tradeable)
+    tickers_with_earnings = sum(1 for t in universe.tradeable if earnings_cal.has_data(t))
+    print(f"  Earnings data: {tickers_with_earnings}/{len(universe.tradeable)} tickers")
+
+    feature_eng = MetaFeatureEngineering(
+        context_tickers=universe.context,
+        earnings_calendar=earnings_cal,
+        holding_period=MAX_HOLDING_DAYS or 5,
+    )
 
     regime_classifier = MarketRegimeClassifier()
 
@@ -880,6 +893,8 @@ def main():
             "regime_gating": True,
             "regime_bear_threshold": max(CONFIDENCE_THRESHOLD, 0.80),
             "regime_bull_threshold": CONFIDENCE_THRESHOLD * 0.90,
+            "earnings_filter": True,
+            "earnings_tickers_loaded": tickers_with_earnings,
         },
         "backtest": {
             "initial_cash": INITIAL_CASH,
@@ -1098,6 +1113,7 @@ def main():
             "n_tickers":            len(test_data),
             "run_dir":              str(run_dir),
             "regime_gating":        True,
+            "earnings_filter":      True,
             "profit_target":        MODEL_PROFIT_TARGET,
             "stop_loss":            MODEL_STOP_LOSS,
             "sector_cap":           2,
