@@ -99,8 +99,8 @@ def create_metalabels(
     candidates: list[CandidateSignal],
     holding_period: int = 5,
     min_return: float = 0.003,
-    profit_target: float = 0.015,
-    stop_loss: float = 0.010,
+    profit_target: float = 0.04,
+    stop_loss: float = 0.025,
 ) -> pd.DataFrame:
     """Create triple-barrier labels for candidate signals.
 
@@ -114,8 +114,12 @@ def create_metalabels(
         candidates:     List of CandidateSignal objects.
         holding_period: Maximum bars to hold (vertical barrier).
         min_return:     Minimum return for time-exit to count as profitable.
-        profit_target:  Upper barrier as fraction of entry price (default 1.5%).
-        stop_loss:      Lower barrier as fraction of entry price (default 1.0%).
+        profit_target:  Upper barrier as fraction of entry price (default 4%).
+                        Sized to require a meaningful multi-day move; wider than
+                        typical single-day intraday range (~1-2% for large caps).
+        stop_loss:      Lower barrier as fraction of entry price (default 2.5%).
+                        Sized outside normal intraday noise to avoid stop-outs
+                        on random volatility.
 
     Returns:
         DataFrame with columns:

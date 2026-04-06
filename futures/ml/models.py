@@ -7,6 +7,7 @@ from typing import Optional, Any
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
@@ -35,6 +36,7 @@ class ModelWrapper(ABC):
         self.model = None
         self.feature_names: list[str] = []
         self.is_fitted = False
+        self.is_calibrated = False
 
     @abstractmethod
     def _create_model(self) -> Any:
@@ -68,6 +70,56 @@ class ModelWrapper(ABC):
 
         return self
 
+    def calibrate(self, feature_set: FeatureSet, method: str = "isotonic") -> "ModelWrapper":
+        """Calibrate probability estimates on a held-out calibration set.
+
+        Fits a calibration curve (isotonic regression or Platt scaling) that
+        maps the base model's raw probabilities to better-calibrated values.
+        After calibration, predict_proba() spreads probabilities across a wider,
+        more meaningful range.
+
+        Implemented manually with IsotonicRegression / LogisticRegression rather
+        than CalibratedClassifierCV because sklearn 1.2+ removed cv='prefit'.
+
+        The calibration set must be temporally AFTER the training set to avoid
+        lookahead — the training script enforces this by using the last N% of
+        training data chronologically.
+
+        Args:
+            feature_set: Held-out calibration data (distinct from training data).
+            method: 'isotonic' (non-parametric, default) or 'sigmoid' (Platt).
+                    Isotonic is preferred when n_calibration > ~1000.
+
+        Returns:
+            self for method chaining
+        """
+        if not self.is_fitted:
+            raise ValueError("Model must be fitted before calibration")
+        if feature_set.y is None:
+            raise ValueError("Calibration FeatureSet must have labels (y)")
+
+        X = feature_set.X.values
+        y = feature_set.y.values
+
+        if self.scale_features:
+            X = self.scaler.transform(X)  # transform only — scaler already fit on training data
+
+        # Get raw probabilities from the base model on the calibration set
+        raw_probs = self.model.predict_proba(X)[:, 1]
+
+        if method == "isotonic":
+            calibrator = IsotonicRegression(out_of_bounds="clip")
+            calibrator.fit(raw_probs, y)
+        else:  # sigmoid / Platt scaling
+            calibrator = LogisticRegression(C=1.0, max_iter=1000)
+            calibrator.fit(raw_probs.reshape(-1, 1), y)
+
+        self._calibrator = calibrator
+        self._calibration_method = method
+        self.is_calibrated = True
+
+        return self
+
     def predict(self, feature_set: FeatureSet) -> np.ndarray:
         """
         Make predictions.
@@ -89,14 +141,10 @@ class ModelWrapper(ABC):
         return self.model.predict(X)
 
     def predict_proba(self, feature_set: FeatureSet) -> np.ndarray:
-        """
-        Get prediction probabilities.
-
-        Args:
-            feature_set: FeatureSet with X
+        """Get prediction probabilities, routed through calibration if fitted.
 
         Returns:
-            Array of class probabilities
+            Array of shape (n_samples, 2) with class probabilities.
         """
         if not self.is_fitted:
             raise ValueError("Model must be fitted before prediction")
@@ -109,7 +157,19 @@ class ModelWrapper(ABC):
         if self.scale_features:
             X = self.scaler.transform(X)
 
-        return self.model.predict_proba(X)
+        raw_probs = self.model.predict_proba(X)
+
+        if not self.is_calibrated:
+            return raw_probs
+
+        # Apply calibration curve to the positive-class column
+        pos_probs = raw_probs[:, 1]
+        if self._calibration_method == "isotonic":
+            cal_probs = self._calibrator.transform(pos_probs)
+        else:  # sigmoid
+            cal_probs = self._calibrator.predict_proba(pos_probs.reshape(-1, 1))[:, 1]
+
+        return np.column_stack([1.0 - cal_probs, cal_probs])
 
     def evaluate(self, feature_set: FeatureSet) -> ModelMetrics:
         """
@@ -153,7 +213,7 @@ class ModelWrapper(ABC):
         )
 
     def get_top_features(self, n: int = 10) -> list[tuple[str, float]]:
-        """Get top N most important features."""
+        """Get top N most important features by feature_importances_ or coef_."""
         if not hasattr(self.model, "feature_importances_"):
             return []
 
