@@ -72,6 +72,10 @@ class Backtester:
         max_holding_days: Optional[int] = None,
         profit_target: Optional[float] = None,
         stop_loss: Optional[float] = None,
+        sector_map: Optional[dict[str, str]] = None,
+        max_sector_positions: int = 3,
+        correlation_limit: Optional[float] = None,
+        correlation_lookback: int = 30,
     ):
         """
         Initialize backtester.
@@ -88,6 +92,13 @@ class Backtester:
                            (mirrors the triple barrier upper barrier). None = disabled.
             stop_loss: Exit long when price falls this fraction below entry
                        (mirrors the triple barrier lower barrier). None = disabled.
+            sector_map: Dict mapping ticker → sector name. When provided, limits
+                        concurrent positions to max_sector_positions per sector.
+            max_sector_positions: Max concurrent positions in a single sector (default 3).
+            correlation_limit: Reject new positions that have rolling correlation
+                               above this threshold with any existing position.
+                               None = disabled. Typical value: 0.7.
+            correlation_lookback: Number of trading days for correlation window (default 30).
         """
         settings = get_settings()
 
@@ -97,12 +108,19 @@ class Backtester:
         self.max_holding_days = max_holding_days
         self.profit_target = profit_target
         self.stop_loss = stop_loss
+        self.sector_map = sector_map or {}
+        self.max_sector_positions = max_sector_positions
+        self.correlation_limit = correlation_limit
+        self.correlation_lookback = correlation_lookback
 
         self.portfolio = Portfolio(
             initial_cash=initial_cash or settings.default_cash,
             transaction_cost_pct=transaction_cost_pct or settings.transaction_cost_pct,
             slippage_pct=slippage_pct or settings.slippage_pct,
         )
+
+        # Populated in run() for correlation filtering; keyed by ticker, indexed by date
+        self._returns_df: pd.DataFrame = pd.DataFrame()
 
     def run(
         self,
@@ -129,6 +147,17 @@ class Backtester:
         processed_data = {}
         for ticker, df in data.items():
             processed_data[ticker] = self.strategy.precompute_indicators(df)
+
+        # Precompute daily returns for correlation filtering (P2-6)
+        if self.correlation_limit is not None:
+            close_prices = {
+                ticker: df["close"]
+                for ticker, df in processed_data.items()
+                if "close" in df.columns
+            }
+            self._returns_df = pd.DataFrame(close_prices).pct_change()
+        else:
+            self._returns_df = pd.DataFrame()
 
         # Get all unique dates
         all_dates = set()
@@ -296,6 +325,51 @@ class Backtester:
         # Limit new positions
         available_slots = self.max_positions - len(self.portfolio.positions)
         buy_candidates = buy_candidates[:available_slots]
+
+        # --- Sector cap filter (P2-6) ---
+        if self.sector_map:
+            sector_counts: dict[str, int] = {}
+            for held_ticker in self.portfolio.positions:
+                sector = self.sector_map.get(held_ticker, "Unknown")
+                sector_counts[sector] = sector_counts.get(sector, 0) + 1
+
+            filtered = []
+            for ticker, price, size_fraction in buy_candidates:
+                sector = self.sector_map.get(ticker, "Unknown")
+                if sector_counts.get(sector, 0) < self.max_sector_positions:
+                    filtered.append((ticker, price, size_fraction))
+                    # Speculatively increment so same-day candidates don't pile into one sector
+                    sector_counts[sector] = sector_counts.get(sector, 0) + 1
+            buy_candidates = filtered
+
+        # --- Correlation filter (P2-6) ---
+        if self.correlation_limit is not None and not self._returns_df.empty and self.portfolio.positions:
+            held_tickers = list(self.portfolio.positions.keys())
+            # Slice to the lookback window ending at current_date
+            mask = self._returns_df.index <= current_date
+            window = self._returns_df[mask].tail(self.correlation_lookback)
+
+            filtered = []
+            for ticker, price, size_fraction in buy_candidates:
+                if ticker not in window.columns:
+                    filtered.append((ticker, price, size_fraction))
+                    continue
+                candidate_returns = window[ticker].dropna()
+                too_correlated = False
+                for held in held_tickers:
+                    if held not in window.columns:
+                        continue
+                    held_returns = window[held].dropna()
+                    common = candidate_returns.index.intersection(held_returns.index)
+                    if len(common) < 10:
+                        continue
+                    corr = candidate_returns[common].corr(held_returns[common])
+                    if corr > self.correlation_limit:
+                        too_correlated = True
+                        break
+                if not too_correlated:
+                    filtered.append((ticker, price, size_fraction))
+            buy_candidates = filtered
 
         for ticker, price, size_fraction in buy_candidates:
             position_value = self.portfolio.total_value * size_fraction

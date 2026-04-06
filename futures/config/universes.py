@@ -359,3 +359,128 @@ def list_universes() -> dict:
         "medium": "~150 stocks - Top tier S&P 500, balanced",
         "large": "~300 stocks - Full large-cap coverage",
     }
+
+
+# Sector classification for position limit enforcement (P2-6).
+# Covers all tickers in the small + medium + large universes.
+SECTOR_MAP: dict[str, str] = {
+    # Technology
+    "AAPL": "Technology", "MSFT": "Technology", "GOOGL": "Technology", "GOOG": "Technology",
+    "AMZN": "Technology", "META": "Technology", "NVDA": "Technology", "TSLA": "Technology",
+    "AMD": "Technology", "INTC": "Technology", "CRM": "Technology", "ORCL": "Technology",
+    "ADBE": "Technology", "CSCO": "Technology", "AVGO": "Technology", "ACN": "Technology",
+    "TXN": "Technology", "QCOM": "Technology", "IBM": "Technology", "NOW": "Technology",
+    "INTU": "Technology", "AMAT": "Technology", "MU": "Technology", "ADI": "Technology",
+    "LRCX": "Technology", "KLAC": "Technology", "MCHP": "Technology", "NXPI": "Technology",
+    "ON": "Technology", "SWKS": "Technology", "MRVL": "Technology", "MPWR": "Technology",
+    "SNPS": "Technology", "CDNS": "Technology", "ANSS": "Technology", "WDAY": "Technology",
+    "TEAM": "Technology", "DDOG": "Technology", "ZS": "Technology", "CRWD": "Technology",
+    "PANW": "Technology", "FTNT": "Technology", "SPLK": "Technology", "HPQ": "Technology",
+    "HPE": "Technology", "DELL": "Technology", "NTAP": "Technology", "WDC": "Technology",
+    "STX": "Technology", "NFLX": "Technology", "ABNB": "Technology", "UBER": "Technology",
+    "LYFT": "Technology", "SNAP": "Technology", "PINS": "Technology", "MTCH": "Technology",
+    # Financials
+    "JPM": "Financials", "BAC": "Financials", "GS": "Financials", "MS": "Financials",
+    "V": "Financials", "MA": "Financials", "BRK.B": "Financials", "C": "Financials",
+    "WFC": "Financials", "AXP": "Financials", "BLK": "Financials", "SCHW": "Financials",
+    "MMC": "Financials", "CB": "Financials", "PGR": "Financials", "ICE": "Financials",
+    "CME": "Financials", "AON": "Financials", "USB": "Financials", "PNC": "Financials",
+    "TFC": "Financials", "COF": "Financials", "FITB": "Financials", "KEY": "Financials",
+    "RF": "Financials", "CFG": "Financials", "HBAN": "Financials", "MTB": "Financials",
+    "ZION": "Financials", "PYPL": "Financials", "SQ": "Financials", "FIS": "Financials",
+    "FISV": "Financials", "GPN": "Financials", "AJG": "Financials", "TRV": "Financials",
+    "ALL": "Financials", "MET": "Financials", "AFL": "Financials", "SPGI": "Financials",
+    "MCO": "Financials", "MSCI": "Financials", "NDAQ": "Financials",
+    # Healthcare
+    "JNJ": "Healthcare", "UNH": "Healthcare", "PFE": "Healthcare", "MRK": "Healthcare",
+    "ABBV": "Healthcare", "LLY": "Healthcare", "TMO": "Healthcare", "ABT": "Healthcare",
+    "BMY": "Healthcare", "AMGN": "Healthcare", "MDT": "Healthcare", "DHR": "Healthcare",
+    "ISRG": "Healthcare", "SYK": "Healthcare", "GILD": "Healthcare", "VRTX": "Healthcare",
+    "REGN": "Healthcare", "ZTS": "Healthcare", "BDX": "Healthcare", "CI": "Healthcare",
+    "ELV": "Healthcare", "HUM": "Healthcare", "CVS": "Healthcare", "MCK": "Healthcare",
+    "HCA": "Healthcare", "BIIB": "Healthcare", "MRNA": "Healthcare", "TAK": "Healthcare",
+    "BSX": "Healthcare", "EW": "Healthcare", "BAX": "Healthcare", "HOLX": "Healthcare",
+    "IDXX": "Healthcare", "ALGN": "Healthcare", "DXCM": "Healthcare", "TFX": "Healthcare",
+    "CNC": "Healthcare", "CAH": "Healthcare", "ABC": "Healthcare", "IQV": "Healthcare",
+    "A": "Healthcare", "MTD": "Healthcare", "WAT": "Healthcare", "PKI": "Healthcare",
+    "TECH": "Healthcare", "BIO": "Healthcare", "THC": "Healthcare", "UHS": "Healthcare",
+    "DVA": "Healthcare",
+    # Consumer Discretionary
+    "HD": "Consumer Discretionary", "MCD": "Consumer Discretionary", "NKE": "Consumer Discretionary",
+    "SBUX": "Consumer Discretionary", "DIS": "Consumer Discretionary", "LOW": "Consumer Discretionary",
+    "TJX": "Consumer Discretionary", "BKNG": "Consumer Discretionary", "CMG": "Consumer Discretionary",
+    "MAR": "Consumer Discretionary", "ORLY": "Consumer Discretionary", "AZO": "Consumer Discretionary",
+    "ROST": "Consumer Discretionary", "YUM": "Consumer Discretionary", "DHI": "Consumer Discretionary",
+    "BBY": "Consumer Discretionary", "ULTA": "Consumer Discretionary", "DG": "Consumer Discretionary",
+    "DLTR": "Consumer Discretionary", "KMX": "Consumer Discretionary", "AN": "Consumer Discretionary",
+    "GPC": "Consumer Discretionary", "AAP": "Consumer Discretionary", "DRI": "Consumer Discretionary",
+    "WYNN": "Consumer Discretionary", "LVS": "Consumer Discretionary", "MGM": "Consumer Discretionary",
+    "HLT": "Consumer Discretionary", "EXPE": "Consumer Discretionary", "CCL": "Consumer Discretionary",
+    "RCL": "Consumer Discretionary", "NCLH": "Consumer Discretionary", "LULU": "Consumer Discretionary",
+    "TPR": "Consumer Discretionary", "VFC": "Consumer Discretionary", "PVH": "Consumer Discretionary",
+    "RL": "Consumer Discretionary", "CMCSA": "Consumer Discretionary", "CHTR": "Consumer Discretionary",
+    "NWSA": "Consumer Discretionary",
+    # Consumer Staples
+    "WMT": "Consumer Staples", "PG": "Consumer Staples", "KO": "Consumer Staples",
+    "PEP": "Consumer Staples", "COST": "Consumer Staples", "PM": "Consumer Staples",
+    "MO": "Consumer Staples", "MDLZ": "Consumer Staples", "CL": "Consumer Staples",
+    "KMB": "Consumer Staples", "GIS": "Consumer Staples", "K": "Consumer Staples",
+    "SYY": "Consumer Staples", "STZ": "Consumer Staples", "KHC": "Consumer Staples",
+    "SJM": "Consumer Staples", "HSY": "Consumer Staples", "MKC": "Consumer Staples",
+    "CPB": "Consumer Staples", "CAG": "Consumer Staples", "HRL": "Consumer Staples",
+    "TSN": "Consumer Staples", "BG": "Consumer Staples", "CHD": "Consumer Staples",
+    "CLX": "Consumer Staples", "TGT": "Consumer Staples", "KR": "Consumer Staples",
+    "BF.B": "Consumer Staples",
+    # Industrials
+    "CAT": "Industrials", "BA": "Industrials", "UPS": "Industrials", "HON": "Industrials",
+    "GE": "Industrials", "LMT": "Industrials", "RTX": "Industrials", "DE": "Industrials",
+    "UNP": "Industrials", "FDX": "Industrials", "WM": "Industrials", "ETN": "Industrials",
+    "ITW": "Industrials", "EMR": "Industrials", "NSC": "Industrials", "CSX": "Industrials",
+    "GD": "Industrials", "NOC": "Industrials", "MMM": "Industrials", "JCI": "Industrials",
+    "HII": "Industrials", "TDG": "Industrials", "HWM": "Industrials", "LHX": "Industrials",
+    "ROK": "Industrials", "PH": "Industrials", "IR": "Industrials", "DOV": "Industrials",
+    "SWK": "Industrials", "CMI": "Industrials", "PCAR": "Industrials", "GNRC": "Industrials",
+    "DAL": "Industrials", "UAL": "Industrials", "LUV": "Industrials", "AAL": "Industrials",
+    "JBHT": "Industrials", "CHRW": "Industrials", "EXPD": "Industrials", "CARR": "Industrials",
+    "TT": "Industrials", "LII": "Industrials", "AOS": "Industrials", "MAS": "Industrials",
+    "RSG": "Industrials", "WCN": "Industrials",
+    # Energy
+    "XOM": "Energy", "CVX": "Energy", "COP": "Energy", "SLB": "Energy", "EOG": "Energy",
+    "MPC": "Energy", "PSX": "Energy", "VLO": "Energy", "OXY": "Energy", "PXD": "Energy",
+    "HES": "Energy", "DVN": "Energy", "FANG": "Energy", "MRO": "Energy", "APA": "Energy",
+    "HAL": "Energy", "BKR": "Energy", "WMB": "Energy", "KMI": "Energy", "OKE": "Energy",
+    # Materials
+    "LIN": "Materials", "APD": "Materials", "SHW": "Materials", "ECL": "Materials",
+    "NEM": "Materials", "FCX": "Materials", "NUE": "Materials", "DOW": "Materials",
+    "PPG": "Materials", "DD": "Materials", "LYB": "Materials", "ALB": "Materials",
+    "CE": "Materials", "STLD": "Materials", "CLF": "Materials",
+    # Utilities
+    "NEE": "Utilities", "DUK": "Utilities", "SO": "Utilities", "D": "Utilities",
+    "AEP": "Utilities", "EXC": "Utilities", "SRE": "Utilities", "XEL": "Utilities",
+    "WEC": "Utilities", "ES": "Utilities", "AWK": "Utilities", "ED": "Utilities",
+    # Real Estate
+    "PLD": "Real Estate", "AMT": "Real Estate", "EQIX": "Real Estate", "CCI": "Real Estate",
+    "PSA": "Real Estate", "SPG": "Real Estate", "DLR": "Real Estate", "WELL": "Real Estate",
+    "AVB": "Real Estate", "EQR": "Real Estate", "O": "Real Estate", "VICI": "Real Estate",
+    "INVH": "Real Estate", "MAA": "Real Estate", "UDR": "Real Estate",
+    # Communication Services
+    "T": "Communication Services", "VZ": "Communication Services", "TMUS": "Communication Services",
+    "WBD": "Communication Services", "PARA": "Communication Services", "FOX": "Communication Services",
+    "EA": "Communication Services", "TTWO": "Communication Services", "ATVI": "Communication Services",
+}
+
+
+def get_sector_map(tickers: list[str] | None = None) -> dict[str, str]:
+    """
+    Return the sector mapping for the given tickers.
+
+    Args:
+        tickers: List of tickers to include. None returns the full map.
+
+    Returns:
+        Dict mapping ticker → GICS sector name. Tickers not in the map
+        are assigned "Unknown".
+    """
+    if tickers is None:
+        return dict(SECTOR_MAP)
+    return {t: SECTOR_MAP.get(t, "Unknown") for t in tickers}

@@ -11,11 +11,13 @@ import matplotlib.dates as mdates
 import pandas as pd
 import numpy as np
 
-from futures.config import get_universe, TickerUniverse
+from futures.config import get_universe, TickerUniverse, get_sector_map
 from futures.data.fetcher import DataManager
+from futures.data.earnings import EarningsCalendar
 from futures.strategies import MetalabelingStrategy
 from futures.metalabeling import PrimarySignalGenerator, MetaFeatureEngineering
 from futures.backtester import Backtester
+from futures.regime.classifier import MarketRegimeClassifier
 
 
 # Use a clean style
@@ -855,7 +857,21 @@ def main():
     # Create strategy
     print("\nInitializing strategy...")
     signal_gen = PrimarySignalGenerator()
-    feature_eng = MetaFeatureEngineering(context_tickers=universe.context)
+
+    # Load earnings calendar (P2-4)
+    print("  Loading earnings calendar...")
+    earnings_cal = EarningsCalendar()
+    earnings_cal.load(universe.tradeable)
+    tickers_with_earnings = sum(1 for t in universe.tradeable if earnings_cal.has_data(t))
+    print(f"  Earnings data: {tickers_with_earnings}/{len(universe.tradeable)} tickers")
+
+    feature_eng = MetaFeatureEngineering(
+        context_tickers=universe.context,
+        earnings_calendar=earnings_cal,
+        holding_period=MAX_HOLDING_DAYS or 5,
+    )
+
+    regime_classifier = MarketRegimeClassifier()
 
     strategy = MetalabelingStrategy(
         meta_model=model,
@@ -864,6 +880,7 @@ def main():
         confidence_threshold=CONFIDENCE_THRESHOLD,
         context_tickers=universe.context,
         feature_names=model_info.get("feature_names"),
+        regime_classifier=regime_classifier,
     )
 
     # Save configuration
@@ -873,6 +890,11 @@ def main():
             "name": "metalabeling",
             "confidence_threshold": CONFIDENCE_THRESHOLD,
             "primary_indicators": ["sma_crossover", "rsi_extremes", "macd_crossover", "bb_touch"],
+            "regime_gating": True,
+            "regime_bear_threshold": max(CONFIDENCE_THRESHOLD, 0.80),
+            "regime_bull_threshold": CONFIDENCE_THRESHOLD * 0.90,
+            "earnings_filter": True,
+            "earnings_tickers_loaded": tickers_with_earnings,
         },
         "backtest": {
             "initial_cash": INITIAL_CASH,
@@ -883,6 +905,9 @@ def main():
             "profit_target": MODEL_PROFIT_TARGET,
             "stop_loss": MODEL_STOP_LOSS,
             "n_tickers": len(test_data),
+            "sector_cap": 2,
+            "correlation_limit": 0.70,
+            "correlation_lookback": 30,
         },
         "model": {
             "training_date": model_info.get("training_date"),
@@ -911,12 +936,20 @@ def main():
         print(f"  Profit target:   {MODEL_PROFIT_TARGET:.1%}")
     if MODEL_STOP_LOSS:
         print(f"  Stop loss:       {MODEL_STOP_LOSS:.1%}")
+    print(f"  Regime gating:   ENABLED (BULL={CONFIDENCE_THRESHOLD*0.90:.2f}, NEUTRAL={CONFIDENCE_THRESHOLD:.2f}, BEAR={max(CONFIDENCE_THRESHOLD,0.80):.2f})")
+    sector_map = get_sector_map(universe.tradeable)
+    print(f"  Sector cap:      {len(set(sector_map.values()))} sectors, max 2 positions each")
+    print(f"  Corr filter:     r > 0.70 over 30-day window")
     bt = Backtester(
         strategy=strategy,
         initial_cash=INITIAL_CASH,
         max_holding_days=MAX_HOLDING_DAYS,
         profit_target=MODEL_PROFIT_TARGET,
         stop_loss=MODEL_STOP_LOSS,
+        sector_map=sector_map,
+        max_sector_positions=2,
+        correlation_limit=0.70,
+        correlation_lookback=30,
     )
     result = bt.run(test_data, show_progress=True)
 
@@ -1079,6 +1112,12 @@ def main():
             "initial_cash":         INITIAL_CASH,
             "n_tickers":            len(test_data),
             "run_dir":              str(run_dir),
+            "regime_gating":        True,
+            "earnings_filter":      True,
+            "profit_target":        MODEL_PROFIT_TARGET,
+            "stop_loss":            MODEL_STOP_LOSS,
+            "sector_cap":           2,
+            "correlation_limit":    0.70,
         }
         run_id = record(
             metrics=registry_metrics,
