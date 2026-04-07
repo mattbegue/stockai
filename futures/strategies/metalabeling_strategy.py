@@ -225,7 +225,7 @@ class MetalabelingStrategy(Strategy):
 
     # Holding period (in trading days) by signal type (P2-10)
     _MOMENTUM_SIGNALS = {"sma_crossover", "volume_breakout", "roc_reversal"}
-    _REVERSION_SIGNALS = {"rsi_oversold", "rsi_overbought", "bb_lower", "bb_upper", "vwap_cross"}
+    _REVERSION_SIGNALS = {"rsi_oversold", "rsi_overbought", "bb_lower_touch", "bb_upper_touch", "vwap_cross"}
     # Everything else (macd_crossover, stoch_crossover, obv_cross, …) → 5 days
 
     def get_position_holding_days(self, signals: dict[str, "Signal"]) -> dict[str, int]:

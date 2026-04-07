@@ -292,6 +292,58 @@ class MetaFeatureEngineering:
         features["has_roc_reversal"] = 1 if "roc_reversal" in source_indicators else 0
         features["has_vwap_cross"] = 1 if "vwap_cross" in source_indicators else 0
 
+        # --- Signal convergence features (p2/convergence-features) ---
+        # Classify each firing indicator by type.
+        # Names must match what PrimarySignalGenerator emits.
+        _REVERSION = {"rsi_oversold", "rsi_overbought", "bb_lower_touch", "bb_upper_touch", "vwap_cross"}
+        _MOMENTUM  = {"sma_crossover", "volume_breakout", "roc_reversal"}
+        # Everything else (macd_crossover, stoch_crossover, obv_cross) is neutral/mixed
+
+        n_rev = sum(1 for s in source_indicators if s in _REVERSION)
+        n_mom = sum(1 for s in source_indicators if s in _MOMENTUM)
+        n_neu = sum(1 for s in source_indicators if s not in _REVERSION and s not in _MOMENTUM)
+
+        features["n_reversion_signals"] = n_rev
+        features["n_momentum_signals"] = n_mom
+        features["n_neutral_signals"] = n_neu
+
+        # Signal type purity: are all firing signals of the same type?
+        # Pure signals historically have stronger follow-through than mixed.
+        features["is_pure_reversion"] = 1 if n_rev > 0 and n_mom == 0 else 0
+        features["is_pure_momentum"]  = 1 if n_mom > 0 and n_rev == 0 else 0
+        features["is_mixed_type"]     = 1 if n_rev > 0 and n_mom > 0 else 0
+
+        # Purity ratio: fraction of all firing indicators that belong to the
+        # dominant type. Ranges 0–1; higher = more coherent signal cluster.
+        n_total = n_rev + n_mom + n_neu
+        if n_total > 0:
+            features["signal_purity"] = max(n_rev, n_mom) / n_total
+        else:
+            features["signal_purity"] = 0.0
+
+        # Interaction: signal type × price-level context
+        # For reversion BUY the stock should be below SMA-20 (pulled back enough).
+        # For momentum BUY it should be above SMA-20 (trend established).
+        above_sma20 = features.get("above_sma_20", np.nan)
+        if not np.isnan(above_sma20) if isinstance(above_sma20, float) else True:
+            if direction == 1:
+                features["reversion_setup_valid"] = (
+                    1 if (n_rev > 0 and above_sma20 == 0) else 0
+                )
+                features["momentum_setup_valid"] = (
+                    1 if (n_mom > 0 and above_sma20 == 1) else 0
+                )
+            else:
+                features["reversion_setup_valid"] = (
+                    1 if (n_rev > 0 and above_sma20 == 1) else 0
+                )
+                features["momentum_setup_valid"] = (
+                    1 if (n_mom > 0 and above_sma20 == 0) else 0
+                )
+        else:
+            features["reversion_setup_valid"] = np.nan
+            features["momentum_setup_valid"] = np.nan
+
         # Signal direction
         features["direction"] = direction
 
@@ -673,6 +725,83 @@ class MetaFeatureEngineering:
 
         return features
 
+    def _get_trend_alignment_features(
+        self, df: pd.DataFrame, signal_idx: int, direction: int
+    ) -> dict:
+        """
+        Multi-timeframe trend alignment features (p2/convergence-features).
+
+        Captures whether the broader price trend reinforces or contradicts the
+        signal direction — a key discriminator between high- and low-quality setups.
+
+        A reversion BUY where 5d momentum is still negative but 20d is recovering
+        is a higher-quality setup than one where momentum is actively falling at
+        all timeframes.
+        """
+        features = {}
+
+        close = df["close"].iloc[signal_idx]
+
+        # Is 5d / 20d return moving in the same direction as the signal?
+        for period, label in ((5, "5d"), (20, "20d")):
+            if signal_idx >= period:
+                prior_close = df["close"].iloc[signal_idx - period]
+                if prior_close and prior_close != 0:
+                    ret = close / prior_close - 1
+                    features[f"trend_aligned_{label}"] = (
+                        1 if (direction > 0 and ret > 0) or (direction < 0 and ret < 0) else 0
+                    )
+                else:
+                    features[f"trend_aligned_{label}"] = np.nan
+            else:
+                features[f"trend_aligned_{label}"] = np.nan
+
+        # Both 5d and 20d aligned with signal (strong confluence)
+        a5 = features.get("trend_aligned_5d", np.nan)
+        a20 = features.get("trend_aligned_20d", np.nan)
+        if not (isinstance(a5, float) and np.isnan(a5)) and not (isinstance(a20, float) and np.isnan(a20)):
+            features["both_timeframes_aligned"] = 1 if a5 == 1 and a20 == 1 else 0
+        else:
+            features["both_timeframes_aligned"] = np.nan
+
+        # SMA-20 slope: is the 20-day moving average itself trending with the signal?
+        # Use 5-bar look-back on the SMA to measure slope direction.
+        if "sma_20" in df.columns and signal_idx >= 5:
+            sma_now  = df["sma_20"].iloc[signal_idx]
+            sma_prev = df["sma_20"].iloc[signal_idx - 5]
+            if not pd.isna(sma_now) and not pd.isna(sma_prev) and sma_prev != 0:
+                sma_slope_pct = (sma_now - sma_prev) / sma_prev * 100
+                features["sma20_slope_5d"] = sma_slope_pct
+                features["sma20_slope_aligned"] = (
+                    1 if (direction > 0 and sma_slope_pct > 0)
+                    or (direction < 0 and sma_slope_pct < 0)
+                    else 0
+                )
+            else:
+                features["sma20_slope_5d"] = np.nan
+                features["sma20_slope_aligned"] = np.nan
+        else:
+            features["sma20_slope_5d"] = np.nan
+            features["sma20_slope_aligned"] = np.nan
+
+        # RSI trend: is RSI recovering (for BUY) or deteriorating (for SELL)?
+        if "rsi" in df.columns and signal_idx >= 5:
+            rsi_now  = df["rsi"].iloc[signal_idx]
+            rsi_prev = df["rsi"].iloc[signal_idx - 5]
+            if not pd.isna(rsi_now) and not pd.isna(rsi_prev):
+                rsi_delta = rsi_now - rsi_prev
+                features["rsi_trend_aligned"] = (
+                    1 if (direction > 0 and rsi_delta > 0)
+                    or (direction < 0 and rsi_delta < 0)
+                    else 0
+                )
+            else:
+                features["rsi_trend_aligned"] = np.nan
+        else:
+            features["rsi_trend_aligned"] = np.nan
+
+        return features
+
     def compute_indicators_for_df(self, df: pd.DataFrame) -> pd.DataFrame:
         """Add indicator columns to a DataFrame."""
         result = df.copy()
@@ -734,6 +863,9 @@ class MetaFeatureEngineering:
 
         # Momentum and volatility features
         features.update(self._get_momentum_volatility_features(ticker_data, signal_idx))
+
+        # Trend alignment features (p2/convergence-features)
+        features.update(self._get_trend_alignment_features(ticker_data, signal_idx, direction))
 
         # Market context features (existing + P2-8 macro/sector)
         features.update(self._get_context_features(context_data, signal_date, ticker))
