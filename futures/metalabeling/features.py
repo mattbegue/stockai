@@ -348,6 +348,20 @@ class MetaFeatureEngineering:
 
         return features
 
+    @staticmethod
+    def _etf_return(df: pd.DataFrame, idx: int, period: int) -> float:
+        """Return period-day return for an ETF at index idx; NaN if not enough history."""
+        if idx >= period:
+            return df["close"].iloc[idx] / df["close"].iloc[idx - period] - 1
+        return np.nan
+
+    @staticmethod
+    def _percentile_rank(series: pd.Series, value: float, window: int = 252) -> float:
+        """Percentile rank of value in the prior `window` bars of series."""
+        if len(series) < 2:
+            return np.nan
+        return (series < value).sum() / len(series) * 100
+
     def _get_context_features(
         self,
         context_data: dict[str, pd.DataFrame],
@@ -364,19 +378,20 @@ class MetaFeatureEngineering:
         """
         features = {}
 
+        # ------------------------------------------------------------------
         # SPY features (market momentum)
+        # ------------------------------------------------------------------
+        spy_idx: int | None = None
         if "SPY" in context_data:
             spy_df = context_data["SPY"]
             if signal_date in spy_df.index:
-                idx = spy_df.index.get_loc(signal_date)
+                spy_idx = spy_df.index.get_loc(signal_date)
+                idx = spy_idx
 
                 # SPY returns — signals are generated at EOD, so today's close is available.
                 for period in (5, 10, 20):
-                    if idx >= period:
-                        ret = spy_df["close"].iloc[idx] / spy_df["close"].iloc[idx - period] - 1
-                        features[f"spy_return_{period}d"] = ret * 100
-                    else:
-                        features[f"spy_return_{period}d"] = np.nan
+                    ret = self._etf_return(spy_df, idx, period)
+                    features[f"spy_return_{period}d"] = ret * 100 if not np.isnan(ret) else np.nan
 
                 # SPY above 50-SMA (trend regime)
                 sma50 = spy_df["close"].rolling(50).mean()
@@ -385,7 +400,9 @@ class MetaFeatureEngineering:
                 else:
                     features["spy_above_sma50"] = np.nan
 
+        # ------------------------------------------------------------------
         # VXX features (volatility regime)
+        # ------------------------------------------------------------------
         if "VXX" in context_data:
             vxx_df = context_data["VXX"]
             if signal_date in vxx_df.index:
@@ -399,26 +416,54 @@ class MetaFeatureEngineering:
 
                     # VXX percentile (vol regime) - use prior bars to avoid lookahead
                     vxx_values = vxx_df["close"].iloc[max(0, idx - 252) : idx]
-                    features["vxx_percentile"] = (
-                        (vxx_values < vxx_close).sum() / len(vxx_values) * 100
-                    )
+                    features["vxx_percentile"] = self._percentile_rank(vxx_values, vxx_close)
                 else:
                     features["vxx_ratio"] = np.nan
                     features["vxx_percentile"] = np.nan
 
-        # Sector ETF momentum (use prior bar to avoid lookahead)
+        # ------------------------------------------------------------------
+        # Sector ETF momentum + relative strength vs SPY (P2-8)
+        # ------------------------------------------------------------------
         sector_etf = SECTOR_MAP.get(ticker)
         if sector_etf and sector_etf in context_data:
             sector_df = context_data[sector_etf]
             if signal_date in sector_df.index:
                 idx = sector_df.index.get_loc(signal_date)
-                if idx >= 5:
-                    ret = sector_df["close"].iloc[idx] / sector_df["close"].iloc[idx - 5] - 1
-                    features["sector_return_5d"] = ret * 100
-                else:
-                    features["sector_return_5d"] = np.nan
 
-        # TLT-HYG spread (risk appetite)
+                # Absolute momentum
+                for period in (5, 20):
+                    ret = self._etf_return(sector_df, idx, period)
+                    if period == 5:
+                        features["sector_return_5d"] = ret * 100 if not np.isnan(ret) else np.nan
+                    else:
+                        features["sector_return_20d"] = ret * 100 if not np.isnan(ret) else np.nan
+
+                # Percentile rank within own 252-day history
+                window_prices = sector_df["close"].iloc[max(0, idx - 252) : idx]
+                features["sector_percentile"] = self._percentile_rank(
+                    window_prices, sector_df["close"].iloc[idx]
+                )
+
+                # Relative strength vs SPY (sector alpha)
+                if spy_idx is not None and "SPY" in context_data:
+                    spy_df2 = context_data["SPY"]
+                    for period in (5, 20):
+                        sect_ret = self._etf_return(sector_df, idx, period)
+                        spy_ret = self._etf_return(spy_df2, spy_idx, period)
+                        if not np.isnan(sect_ret) and not np.isnan(spy_ret):
+                            features[f"sector_vs_spy_{period}d"] = (sect_ret - spy_ret) * 100
+                        else:
+                            features[f"sector_vs_spy_{period}d"] = np.nan
+        else:
+            features["sector_return_5d"] = np.nan
+            features["sector_return_20d"] = np.nan
+            features["sector_percentile"] = np.nan
+            features["sector_vs_spy_5d"] = np.nan
+            features["sector_vs_spy_20d"] = np.nan
+
+        # ------------------------------------------------------------------
+        # TLT-HYG spread (risk appetite — existing)
+        # ------------------------------------------------------------------
         if "TLT" in context_data and "HYG" in context_data:
             tlt_df = context_data["TLT"]
             hyg_df = context_data["HYG"]
@@ -427,15 +472,126 @@ class MetaFeatureEngineering:
                 hyg_idx = hyg_df.index.get_loc(signal_date)
 
                 if tlt_idx >= 5 and hyg_idx >= 5:
-                    tlt_ret = tlt_df["close"].iloc[tlt_idx] / tlt_df["close"].iloc[tlt_idx - 5] - 1
-                    hyg_ret = hyg_df["close"].iloc[hyg_idx] / hyg_df["close"].iloc[hyg_idx - 5] - 1
-                    # Positive = risk-off (TLT outperforming HYG)
-                    features["tlt_hyg_spread_5d"] = (tlt_ret - hyg_ret) * 100
+                    tlt_ret = self._etf_return(tlt_df, tlt_idx, 5)
+                    hyg_ret = self._etf_return(hyg_df, hyg_idx, 5)
+                    if not np.isnan(tlt_ret) and not np.isnan(hyg_ret):
+                        # Positive = risk-off (TLT outperforming HYG)
+                        features["tlt_hyg_spread_5d"] = (tlt_ret - hyg_ret) * 100
+                    else:
+                        features["tlt_hyg_spread_5d"] = np.nan
                 else:
                     features["tlt_hyg_spread_5d"] = np.nan
 
-        # Composite regime score from MarketRegimeClassifier
-        # Reuses the same signals already computed above to avoid redundant lookups.
+        # ------------------------------------------------------------------
+        # Credit spread: HYG vs LQD (high-yield vs investment grade) — P2-8
+        # Positive spread = risk appetite, negative = credit stress
+        # ------------------------------------------------------------------
+        if "HYG" in context_data and "LQD" in context_data:
+            hyg_df = context_data["HYG"]
+            lqd_df = context_data["LQD"]
+            if signal_date in hyg_df.index and signal_date in lqd_df.index:
+                hyg_idx = hyg_df.index.get_loc(signal_date)
+                lqd_idx = lqd_df.index.get_loc(signal_date)
+                for period in (10, 20):
+                    h = self._etf_return(hyg_df, hyg_idx, period)
+                    l = self._etf_return(lqd_df, lqd_idx, period)
+                    if not np.isnan(h) and not np.isnan(l):
+                        features[f"hyg_lqd_spread_{period}d"] = (h - l) * 100
+                    else:
+                        features[f"hyg_lqd_spread_{period}d"] = np.nan
+                # HYG percentile (absolute credit conditions)
+                if hyg_idx >= 20:
+                    window = hyg_df["close"].iloc[max(0, hyg_idx - 252) : hyg_idx]
+                    features["hyg_percentile"] = self._percentile_rank(
+                        window, hyg_df["close"].iloc[hyg_idx]
+                    )
+                else:
+                    features["hyg_percentile"] = np.nan
+        else:
+            features["hyg_lqd_spread_10d"] = np.nan
+            features["hyg_lqd_spread_20d"] = np.nan
+            features["hyg_percentile"] = np.nan
+
+        # ------------------------------------------------------------------
+        # Dollar strength: UUP — P2-8
+        # Strong dollar = headwind for risk assets / EM / commodities
+        # ------------------------------------------------------------------
+        if "UUP" in context_data:
+            uup_df = context_data["UUP"]
+            if signal_date in uup_df.index:
+                idx = uup_df.index.get_loc(signal_date)
+                ret_10d = self._etf_return(uup_df, idx, 10)
+                features["uup_return_10d"] = ret_10d * 100 if not np.isnan(ret_10d) else np.nan
+                if idx >= 20:
+                    window = uup_df["close"].iloc[max(0, idx - 252) : idx]
+                    features["uup_percentile"] = self._percentile_rank(
+                        window, uup_df["close"].iloc[idx]
+                    )
+                else:
+                    features["uup_percentile"] = np.nan
+        else:
+            features["uup_return_10d"] = np.nan
+            features["uup_percentile"] = np.nan
+
+        # ------------------------------------------------------------------
+        # Growth vs safety: USO / GLD ratio — P2-8
+        # Rising USO relative to GLD = cyclical demand growing
+        # ------------------------------------------------------------------
+        if "USO" in context_data and "GLD" in context_data:
+            uso_df = context_data["USO"]
+            gld_df = context_data["GLD"]
+            if signal_date in uso_df.index and signal_date in gld_df.index:
+                uso_idx = uso_df.index.get_loc(signal_date)
+                gld_idx = gld_df.index.get_loc(signal_date)
+                uso_ret = self._etf_return(uso_df, uso_idx, 20)
+                gld_ret = self._etf_return(gld_df, gld_idx, 20)
+                if not np.isnan(uso_ret) and not np.isnan(gld_ret):
+                    features["uso_gld_ratio_20d"] = (uso_ret - gld_ret) * 100
+                else:
+                    features["uso_gld_ratio_20d"] = np.nan
+                # GLD absolute momentum (flight-to-safety signal)
+                gld_ret_10 = self._etf_return(gld_df, gld_idx, 10)
+                features["gld_return_10d"] = gld_ret_10 * 100 if not np.isnan(gld_ret_10) else np.nan
+        else:
+            features["uso_gld_ratio_20d"] = np.nan
+            features["gld_return_10d"] = np.nan
+
+        # ------------------------------------------------------------------
+        # Risk asset breadth (P2-8)
+        # Count of risky assets above their 20-day SMA
+        # ------------------------------------------------------------------
+        risk_etfs = ["QQQ", "EEM", "HYG", "EFA"]
+        def_etfs = ["TLT", "GLD", "XLP", "XLU"]
+
+        def _above_sma20(etf: str) -> int | float:
+            if etf not in context_data:
+                return np.nan
+            df = context_data[etf]
+            if signal_date not in df.index:
+                return np.nan
+            idx = df.index.get_loc(signal_date)
+            if idx < 20:
+                return np.nan
+            sma = df["close"].iloc[idx - 20 : idx].mean()
+            return 1 if df["close"].iloc[idx] > sma else 0
+
+        risk_signals = [_above_sma20(e) for e in risk_etfs]
+        def_signals = [_above_sma20(e) for e in def_etfs]
+
+        risk_valid = [v for v in risk_signals if not (isinstance(v, float) and np.isnan(v))]
+        def_valid = [v for v in def_signals if not (isinstance(v, float) and np.isnan(v))]
+
+        features["risk_breadth"] = sum(risk_valid) / len(risk_valid) if risk_valid else np.nan
+        features["defensive_breadth"] = sum(def_valid) / len(def_valid) if def_valid else np.nan
+        # Net breadth: +1 → full risk-on, -1 → full risk-off
+        if risk_valid and def_valid:
+            features["breadth_net"] = features["risk_breadth"] - features["defensive_breadth"]
+        else:
+            features["breadth_net"] = np.nan
+
+        # ------------------------------------------------------------------
+        # Composite regime score (existing — kept for backward compat)
+        # ------------------------------------------------------------------
         regime_score = 0
         if "SPY" in context_data:
             spy_df = context_data["SPY"]
@@ -468,14 +624,52 @@ class MetaFeatureEngineering:
                 tidx = tlt_df.index.get_loc(signal_date)
                 hidx = hyg_df.index.get_loc(signal_date)
                 if tidx >= 10 and hidx >= 10:
-                    tlt_10d = tlt_df["close"].iloc[tidx] / tlt_df["close"].iloc[tidx - 10] - 1
-                    hyg_10d = hyg_df["close"].iloc[hidx] / hyg_df["close"].iloc[hidx - 10] - 1
-                    regime_score += 1 if hyg_10d > tlt_10d else -1
+                    tlt_10d = self._etf_return(tlt_df, tidx, 10)
+                    hyg_10d = self._etf_return(hyg_df, hidx, 10)
+                    if not np.isnan(tlt_10d) and not np.isnan(hyg_10d):
+                        regime_score += 1 if hyg_10d > tlt_10d else -1
 
         features["regime_score"] = regime_score
-        # Normalised: BULL=1, NEUTRAL~=0, BEAR=-1
         features["regime_bull"] = 1 if regime_score >= 2 else 0
         features["regime_bear"] = 1 if regime_score <= -2 else 0
+
+        return features
+
+    def _get_seasonality_features(self, signal_date: pd.Timestamp) -> dict:
+        """
+        Calendar-based seasonality features (P2-8).
+
+        These capture well-documented seasonal patterns:
+        - Month-of-year effects
+        - Quarter-end window dressing (fund managers buy winners)
+        - January effect (small caps)
+        - Tax loss harvesting season (Nov-Dec selling; Jan buying)
+        """
+        features: dict = {}
+        month = signal_date.month
+        day = signal_date.day
+
+        features["month"] = month
+
+        # Is this within 10 calendar days of quarter end?
+        quarter_ends = [(3, 31), (6, 30), (9, 30), (12, 31)]
+        is_qtr_end = 0
+        for qm, qd in quarter_ends:
+            if month == qm and (qd - day) <= 10:
+                is_qtr_end = 1
+                break
+            # Also catch first 5 days of new quarter (post-window-dressing reversal)
+            if month in (1, 4, 7, 10) and day <= 5:
+                is_qtr_end = 1
+                break
+        features["is_quarter_end"] = is_qtr_end
+
+        # Tax loss harvesting: Nov-Dec (selling pressure) vs Jan (reversal buying)
+        features["is_tax_selling_season"] = 1 if month in (11, 12) else 0
+        features["is_january_effect"] = 1 if month == 1 else 0
+
+        # Summer doldrums (Aug-Sep: lower volume, weaker momentum)
+        features["is_summer"] = 1 if month in (7, 8, 9) else 0
 
         return features
 
@@ -541,8 +735,11 @@ class MetaFeatureEngineering:
         # Momentum and volatility features
         features.update(self._get_momentum_volatility_features(ticker_data, signal_idx))
 
-        # Market context features
+        # Market context features (existing + P2-8 macro/sector)
         features.update(self._get_context_features(context_data, signal_date, ticker))
+
+        # Seasonality features (P2-8)
+        features.update(self._get_seasonality_features(signal_date))
 
         # Earnings risk features (P2-4) — only when calendar is available
         if self.earnings_calendar is not None and self.earnings_calendar.has_data(ticker):
