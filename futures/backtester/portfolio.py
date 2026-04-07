@@ -83,6 +83,7 @@ class Portfolio:
         shares: Optional[float] = None,
         value: Optional[float] = None,
         date: Optional[pd.Timestamp] = None,
+        max_holding_days: Optional[int] = None,
     ) -> bool:
         """
         Execute a buy order.
@@ -131,6 +132,12 @@ class Portfolio:
             pos.shares = total_shares
             pos.entry_price = avg_price
             pos.current_price = price
+            # Keep the stricter (shorter) holding period when averaging up
+            if max_holding_days is not None:
+                if pos.max_holding_days is None:
+                    pos.max_holding_days = max_holding_days
+                else:
+                    pos.max_holding_days = min(pos.max_holding_days, max_holding_days)
         else:
             self.positions[ticker] = Position(
                 ticker=ticker,
@@ -138,6 +145,7 @@ class Portfolio:
                 entry_price=exec_price,
                 entry_date=date or pd.Timestamp.now(),
                 current_price=price,
+                max_holding_days=max_holding_days,
             )
 
         return True

@@ -184,6 +184,7 @@ class Backtester:
         # Signals generated at day T's close are executed at day T+1's open.
         pending_signals: dict[str, Signal] = {}
         pending_sizes: dict[str, float] = {}  # Per-ticker position sizes (fractions)
+        pending_holding_days: dict[str, int] = {}  # Per-ticker max holding periods (P2-10)
 
         iterator = tqdm(all_dates, desc="Backtesting") if show_progress else all_dates
 
@@ -208,16 +209,19 @@ class Backtester:
             # --- AT OPEN: execute yesterday's signals and all exit checks ---
             if open_prices:
                 self.portfolio.update_prices(open_prices)
-                # Time-based exits first
-                if self.max_holding_days is not None:
-                    self._close_aged_positions(open_prices, current_date)
+                # Time-based exits: always call so per-position limits fire even
+                # when global max_holding_days is None (P2-10)
+                self._close_aged_positions(open_prices, current_date)
                 # Barrier exits (profit target / stop loss) — consistent with triple barrier labels
                 if self.profit_target is not None or self.stop_loss is not None:
                     self._close_barrier_positions(
                         open_prices, high_prices, low_prices, current_date
                     )
                 if pending_signals:
-                    self._execute_signals(pending_signals, open_prices, current_date, pending_sizes)
+                    self._execute_signals(
+                        pending_signals, open_prices, current_date,
+                        pending_sizes, pending_holding_days,
+                    )
 
             # --- AT CLOSE: mark-to-market for equity curve ---
             if close_prices:
@@ -228,6 +232,8 @@ class Backtester:
                 signals = self.strategy.generate_signals(current_data)
                 # Per-ticker sizes (empty dict → use global self.position_size)
                 pending_sizes = self.strategy.get_position_sizes(signals)
+                # Per-ticker holding periods (empty dict → use global max_holding_days)
+                pending_holding_days = self.strategy.get_position_holding_days(signals)
                 pending_signals = signals
 
                 for ticker, signal in signals.items():
@@ -240,6 +246,7 @@ class Backtester:
             else:
                 pending_signals = {}
                 pending_sizes = {}
+                pending_holding_days = {}
 
             # Record equity at close
             equity_curve.append({
@@ -291,6 +298,7 @@ class Backtester:
         prices: dict[str, float],
         current_date: pd.Timestamp,
         position_sizes: Optional[dict[str, float]] = None,
+        holding_days: Optional[dict[str, int]] = None,
     ):
         """
         Execute trading signals.
@@ -301,8 +309,11 @@ class Backtester:
             current_date: Execution date
             position_sizes: Optional per-ticker position sizes as portfolio fractions.
                             Falls back to self.position_size when not provided.
+            holding_days: Optional per-ticker max holding periods (P2-10).
+                          Falls back to self.max_holding_days when not provided.
         """
         position_sizes = position_sizes or {}
+        holding_days = holding_days or {}
 
         # First, handle sell signals
         for ticker, signal in signals.items():
@@ -375,11 +386,14 @@ class Backtester:
             position_value = self.portfolio.total_value * size_fraction
             if self.portfolio.cash < position_value * 0.5:
                 break
+            # Per-position holding period (P2-10): strategy override → global fallback
+            pos_hold_days = holding_days.get(ticker, self.max_holding_days)
             self.portfolio.buy(
                 ticker,
                 price,
                 value=min(position_value, self.portfolio.cash * 0.95),
                 date=current_date,
+                max_holding_days=pos_hold_days,
             )
 
     def _close_aged_positions(
@@ -387,19 +401,28 @@ class Backtester:
         prices: dict[str, float],
         current_date: pd.Timestamp,
     ):
-        """Close positions that have exceeded max_holding_days (in trading days)."""
-        if self.max_holding_days is None:
-            return
+        """Close positions that have exceeded their max_holding_days (in trading days).
 
+        Each position can carry its own max_holding_days (set at entry, P2-10).
+        If a position has no per-position limit, the backtester's global
+        max_holding_days is used as fallback. If neither is set, no time exit.
+        """
         import numpy as np
 
         positions_to_close = []
         for ticker, position in self.portfolio.positions.items():
+            # Effective limit: per-position first, then global fallback
+            effective_max = position.max_holding_days
+            if effective_max is None:
+                effective_max = self.max_holding_days
+            if effective_max is None:
+                continue  # No limit for this position
+
             # Count business days held so results are independent of weekend placement
             days_held = int(np.busday_count(
                 position.entry_date.date(), current_date.date()
             ))
-            if days_held >= self.max_holding_days:
+            if days_held >= effective_max:
                 positions_to_close.append(ticker)
 
         for ticker in positions_to_close:
