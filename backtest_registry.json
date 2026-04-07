@@ -1,0 +1,628 @@
+{
+  "runs": [
+    {
+      "id": "bt_001",
+      "timestamp": "2026-04-05T16:53:27.494988",
+      "git_commit": "8eef024",
+      "git_branch": "phase1/fixes",
+      "comment": "Phase1+2 baseline: next-open execution, correct labels, regime features in model, no runtime regime gating, fixed position sizing",
+      "tags": [
+        "baseline",
+        "phase1",
+        "phase2-partial"
+      ],
+      "params": {
+        "universe": "small",
+        "model_name": "2026-04-05",
+        "start_date": "2025-04-02",
+        "end_date": "2026-04-02",
+        "confidence_threshold": 0.55,
+        "max_holding_days": 5,
+        "initial_cash": 100000,
+        "n_tickers": 65,
+        "run_dir": "runs/20260405_165046"
+      },
+      "metrics": {
+        "total_return_pct": 5.841623875555868,
+        "annualized_return_pct": 5.845739721407206,
+        "volatility_pct": 12.633603886288993,
+        "sharpe_ratio": 0.46271355141595616,
+        "max_drawdown_pct": -4.69480940654889,
+        "win_rate_pct": 71.42857142857143,
+        "trading_days": 252,
+        "spy_total_return_pct": 16.13977294865665,
+        "spy_sharpe_ratio": 0.8873866987185367,
+        "total_trades": 21,
+        "profit_factor": 4.50894569097523
+      }
+    },
+    {
+      "id": "bt_002",
+      "timestamp": "2026-04-05T17:09:40.748927",
+      "git_commit": "8eef024",
+      "git_branch": "phase1/fixes",
+      "comment": "Retrained on fresh data through 2026-04-04; same train cutoff 2024-07-01",
+      "tags": [
+        "refreshed"
+      ],
+      "params": {
+        "universe": "small",
+        "model_name": "2026-04-05",
+        "start_date": "2025-04-02",
+        "end_date": "2026-04-02",
+        "confidence_threshold": 0.6,
+        "max_holding_days": 5,
+        "initial_cash": 100000,
+        "n_tickers": 65,
+        "run_dir": "runs/20260405_170712"
+      },
+      "metrics": {
+        "total_return_pct": 0.0,
+        "annualized_return_pct": 0.0,
+        "volatility_pct": 0.0,
+        "sharpe_ratio": 0,
+        "max_drawdown_pct": 0.0,
+        "win_rate_pct": 0.0,
+        "trading_days": 252,
+        "spy_total_return_pct": 16.13977294865665,
+        "spy_sharpe_ratio": 0.8873866987185367,
+        "total_trades": 0,
+        "profit_factor": 0.0
+      }
+    },
+    {
+      "id": "bt_003",
+      "timestamp": "2026-04-05T17:17:16.392741",
+      "git_commit": "8eef024",
+      "git_branch": "phase1/fixes",
+      "comment": "Fresh data through 2026-04-04, retrained v2 (10 features), threshold=0.55",
+      "tags": [
+        "refreshed"
+      ],
+      "params": {
+        "universe": "small",
+        "model_name": "2026-04-05",
+        "start_date": "2025-04-02",
+        "end_date": "2026-04-02",
+        "confidence_threshold": 0.55,
+        "max_holding_days": 5,
+        "initial_cash": 100000,
+        "n_tickers": 65,
+        "run_dir": "runs/20260405_171449"
+      },
+      "metrics": {
+        "total_return_pct": -1.3681426466828572,
+        "annualized_return_pct": -1.3690732865381805,
+        "volatility_pct": 1.081026432096019,
+        "sharpe_ratio": -1.266456809833653,
+        "max_drawdown_pct": -2.1359882035692714,
+        "win_rate_pct": 33.33333333333333,
+        "trading_days": 252,
+        "spy_total_return_pct": 16.13977294865665,
+        "spy_sharpe_ratio": 0.8873866987185367,
+        "total_trades": 6,
+        "profit_factor": 0.3282550220206897
+      }
+    },
+    {
+      "id": "bt_004",
+      "timestamp": "2026-04-05T17:20:23.086707",
+      "git_commit": "8eef024",
+      "git_branch": "phase1/fixes",
+      "comment": "bt_001 retested with refreshed data through 2026-04-04, v1 model (34 features)",
+      "tags": [
+        "refreshed"
+      ],
+      "params": {
+        "universe": "small",
+        "model_name": "2026-04-05",
+        "start_date": "2025-04-02",
+        "end_date": "2026-04-02",
+        "confidence_threshold": 0.55,
+        "max_holding_days": 5,
+        "initial_cash": 100000,
+        "n_tickers": 65,
+        "run_dir": "runs/20260405_171745"
+      },
+      "metrics": {
+        "total_return_pct": 5.841623875555868,
+        "annualized_return_pct": 5.845739721407206,
+        "volatility_pct": 12.633603886288997,
+        "sharpe_ratio": 0.46271355141595605,
+        "max_drawdown_pct": -4.69480940654889,
+        "win_rate_pct": 71.42857142857143,
+        "trading_days": 252,
+        "spy_total_return_pct": 16.13977294865665,
+        "spy_sharpe_ratio": 0.8873866987185367,
+        "total_trades": 21,
+        "profit_factor": 4.50894569097523
+      }
+    },
+    {
+      "id": "bt_005",
+      "timestamp": "2026-04-05T22:25:29.576821",
+      "git_commit": "01fe292",
+      "git_branch": "p2/foundation",
+      "comment": "p2/foundation: triple barrier labels, medium universe, calibrated RF, threshold=0.50",
+      "tags": [
+        "p2-foundation"
+      ],
+      "params": {
+        "universe": "medium",
+        "model_name": "2026-04-05",
+        "start_date": "2025-04-02",
+        "end_date": "2026-04-02",
+        "confidence_threshold": 0.5,
+        "max_holding_days": 5,
+        "initial_cash": 100000,
+        "n_tickers": 174,
+        "run_dir": "runs/20260405_221731"
+      },
+      "metrics": {
+        "total_return_pct": -0.28191848547485243,
+        "annualized_return_pct": -0.2821113077003057,
+        "volatility_pct": 1.003663276456555,
+        "sharpe_ratio": -0.2810816279901193,
+        "max_drawdown_pct": -1.0514666238021415,
+        "win_rate_pct": 66.66666666666666,
+        "trading_days": 252,
+        "spy_total_return_pct": 16.13977294865665,
+        "spy_sharpe_ratio": 0.8873866987185367,
+        "total_trades": 6,
+        "profit_factor": 0.9136488904390514
+      }
+    },
+    {
+      "id": "bt_006",
+      "timestamp": "2026-04-05T22:31:30.304655",
+      "git_commit": "01fe292",
+      "git_branch": "p2/foundation",
+      "comment": "p2/foundation: triple barrier labels, medium universe, calibrated RF, threshold=0.50",
+      "tags": [
+        "p2-foundation"
+      ],
+      "params": {
+        "universe": "medium",
+        "model_name": "2026-04-05",
+        "start_date": "2025-04-02",
+        "end_date": "2026-04-02",
+        "confidence_threshold": 0.5,
+        "max_holding_days": 5,
+        "initial_cash": 100000,
+        "n_tickers": 174,
+        "run_dir": "runs/20260405_222347"
+      },
+      "metrics": {
+        "total_return_pct": -0.28191848547485243,
+        "annualized_return_pct": -0.2821113077003057,
+        "volatility_pct": 1.003663276456555,
+        "sharpe_ratio": -0.2810816279901193,
+        "max_drawdown_pct": -1.0514666238021415,
+        "win_rate_pct": 66.66666666666666,
+        "trading_days": 252,
+        "spy_total_return_pct": 16.13977294865665,
+        "spy_sharpe_ratio": 0.8873866987185367,
+        "total_trades": 6,
+        "profit_factor": 0.9136488904390514
+      }
+    },
+    {
+      "id": "bt_007",
+      "timestamp": "2026-04-05T22:36:00.813120",
+      "git_commit": "01fe292",
+      "git_branch": "p2/foundation",
+      "comment": "p2/foundation: triple barrier labels, medium universe, calibrated RF, threshold=0.50",
+      "tags": [
+        "p2-foundation"
+      ],
+      "params": {
+        "universe": "medium",
+        "model_name": "2026-04-05",
+        "start_date": "2025-04-02",
+        "end_date": "2026-04-02",
+        "confidence_threshold": 0.5,
+        "max_holding_days": 5,
+        "initial_cash": 100000,
+        "n_tickers": 174,
+        "run_dir": "runs/20260405_222850"
+      },
+      "metrics": {
+        "total_return_pct": -0.28191848547485243,
+        "annualized_return_pct": -0.2821113077003057,
+        "volatility_pct": 1.003663276456555,
+        "sharpe_ratio": -0.2810816279901193,
+        "max_drawdown_pct": -1.0514666238021415,
+        "win_rate_pct": 66.66666666666666,
+        "trading_days": 252,
+        "spy_total_return_pct": 16.13977294865665,
+        "spy_sharpe_ratio": 0.8873866987185367,
+        "total_trades": 6,
+        "profit_factor": 0.9136488904390514
+      }
+    },
+    {
+      "id": "bt_008",
+      "timestamp": "2026-04-05T22:41:05.967776",
+      "git_commit": "01fe292",
+      "git_branch": "p2/foundation",
+      "comment": "p2-foundation baseline",
+      "tags": [
+        "p2-foundation"
+      ],
+      "params": {
+        "universe": "medium",
+        "model_name": "2026-04-05",
+        "start_date": "2025-04-02",
+        "end_date": "2026-04-02",
+        "confidence_threshold": 0.5,
+        "max_holding_days": 5,
+        "initial_cash": 100000,
+        "n_tickers": 174,
+        "run_dir": "runs/20260405_223354"
+      },
+      "metrics": {
+        "total_return_pct": -0.28191848547485243,
+        "annualized_return_pct": -0.2821113077003057,
+        "volatility_pct": 1.003663276456555,
+        "sharpe_ratio": -0.2810816279901193,
+        "max_drawdown_pct": -1.0514666238021415,
+        "win_rate_pct": 66.66666666666666,
+        "trading_days": 252,
+        "spy_total_return_pct": 16.13977294865665,
+        "spy_sharpe_ratio": 0.8873866987185367,
+        "total_trades": 6,
+        "profit_factor": 0.9136488904390514
+      }
+    },
+    {
+      "id": "bt_009",
+      "timestamp": "2026-04-05T23:01:28.659683",
+      "git_commit": "aca8187",
+      "git_branch": "p2/foundation",
+      "comment": "p2/foundation: triple barrier execution aligned with training labels",
+      "tags": [
+        "p2-foundation"
+      ],
+      "params": {
+        "universe": "medium",
+        "model_name": "2026-04-05",
+        "start_date": "2025-04-02",
+        "end_date": "2026-04-02",
+        "confidence_threshold": 0.5,
+        "max_holding_days": 5,
+        "initial_cash": 100000,
+        "n_tickers": 174,
+        "run_dir": "runs/20260405_225413"
+      },
+      "metrics": {
+        "total_return_pct": 0.3186270464085261,
+        "annualized_return_pct": 0.31884563166317825,
+        "volatility_pct": 0.7428040335369746,
+        "sharpe_ratio": 0.42924596160974815,
+        "max_drawdown_pct": -0.4437421355276995,
+        "win_rate_pct": 66.66666666666666,
+        "trading_days": 252,
+        "spy_total_return_pct": 16.13977294865665,
+        "spy_sharpe_ratio": 0.8873866987185367,
+        "total_trades": 6,
+        "profit_factor": 2.2397687356005176
+      }
+    },
+    {
+      "id": "bt_010",
+      "timestamp": "2026-04-05T23:11:43.674445",
+      "git_commit": "aca8187",
+      "git_branch": "p2/foundation",
+      "comment": "p2-foundation triple barrier aligned",
+      "tags": [
+        "p2-foundation"
+      ],
+      "params": {
+        "universe": "medium",
+        "model_name": "2026-04-05",
+        "start_date": "2025-04-02",
+        "end_date": "2026-04-02",
+        "confidence_threshold": 0.5,
+        "max_holding_days": 5,
+        "initial_cash": 100000,
+        "n_tickers": 174,
+        "run_dir": "runs/20260405_230439"
+      },
+      "metrics": {
+        "total_return_pct": 0.3186270464085261,
+        "annualized_return_pct": 0.31884563166317825,
+        "volatility_pct": 0.7428040335369767,
+        "sharpe_ratio": 0.42924596160974693,
+        "max_drawdown_pct": -0.4437421355276995,
+        "win_rate_pct": 66.66666666666666,
+        "trading_days": 252,
+        "spy_total_return_pct": 16.13977294865665,
+        "spy_sharpe_ratio": 0.8873866987185367,
+        "total_trades": 6,
+        "profit_factor": 2.2397687356005305
+      }
+    },
+    {
+      "id": "bt_011",
+      "timestamp": "2026-04-05T23:44:03.877476",
+      "git_commit": "af89792",
+      "git_branch": "p2/risk-layer",
+      "comment": "P2-5+P2-6: regime gating + sector cap(2) + corr filter(0.70)",
+      "tags": [
+        "p2_risk_layer",
+        "regime_gating",
+        "sector_cap"
+      ],
+      "params": {
+        "universe": "medium",
+        "model_name": "2026-04-05",
+        "start_date": "2025-04-02",
+        "end_date": "2026-04-02",
+        "confidence_threshold": 0.6,
+        "max_holding_days": 5,
+        "initial_cash": 100000,
+        "n_tickers": 174,
+        "run_dir": "runs/20260405_233659",
+        "regime_gating": true,
+        "profit_target": 0.04,
+        "stop_loss": 0.025,
+        "sector_cap": 2,
+        "correlation_limit": 0.7
+      },
+      "metrics": {
+        "total_return_pct": 0.10534452801265193,
+        "annualized_return_pct": 0.10541671981669776,
+        "volatility_pct": 0.24091887841468348,
+        "sharpe_ratio": 0.43756106001476736,
+        "max_drawdown_pct": -0.11747621401404025,
+        "win_rate_pct": 100.0,
+        "trading_days": 252,
+        "spy_total_return_pct": 16.13977294865665,
+        "spy_sharpe_ratio": 0.8873866987185367,
+        "total_trades": 1,
+        "profit_factor": Infinity
+      }
+    },
+    {
+      "id": "bt_012",
+      "timestamp": "2026-04-05T23:55:08.839763",
+      "git_commit": "af89792",
+      "git_branch": "p2/risk-layer",
+      "comment": "P2-5+P2-6: regime(0.50 base) + sector cap(2) + corr(0.70) \u2014 fair vs bt_010",
+      "tags": [
+        "p2_risk_layer",
+        "regime_gating"
+      ],
+      "params": {
+        "universe": "medium",
+        "model_name": "2026-04-05",
+        "start_date": "2025-04-02",
+        "end_date": "2026-04-02",
+        "confidence_threshold": 0.5,
+        "max_holding_days": 5,
+        "initial_cash": 100000,
+        "n_tickers": 174,
+        "run_dir": "runs/20260405_234811",
+        "regime_gating": true,
+        "profit_target": 0.04,
+        "stop_loss": 0.025,
+        "sector_cap": 2,
+        "correlation_limit": 0.7
+      },
+      "metrics": {
+        "total_return_pct": 1.2191222747927943,
+        "annualized_return_pct": 1.2199623629052248,
+        "volatility_pct": 0.8620268776056461,
+        "sharpe_ratio": 1.4152254350743394,
+        "max_drawdown_pct": -0.3213966901510265,
+        "win_rate_pct": 75.0,
+        "trading_days": 252,
+        "spy_total_return_pct": 16.13977294865665,
+        "spy_sharpe_ratio": 0.8873866987185367,
+        "total_trades": 12,
+        "profit_factor": 3.8738695499082745
+      }
+    },
+    {
+      "id": "bt_013",
+      "timestamp": "2026-04-06T08:34:06.289519",
+      "git_commit": "12b7684",
+      "git_branch": "p2/risk-layer",
+      "comment": "P2-4+P2-5+P2-6: earnings filter + regime gating + sector cap(2) + corr(0.70)",
+      "tags": [
+        "p2_risk_layer",
+        "p2_4_earnings"
+      ],
+      "params": {
+        "universe": "medium",
+        "model_name": "2026-04-05",
+        "start_date": "2025-04-02",
+        "end_date": "2026-04-02",
+        "confidence_threshold": 0.5,
+        "max_holding_days": 5,
+        "initial_cash": 100000,
+        "n_tickers": 174,
+        "run_dir": "runs/20260406_082326",
+        "regime_gating": true,
+        "earnings_filter": true,
+        "profit_target": 0.04,
+        "stop_loss": 0.025,
+        "sector_cap": 2,
+        "correlation_limit": 0.7
+      },
+      "metrics": {
+        "total_return_pct": 1.118537597162117,
+        "annualized_return_pct": 1.119307990531504,
+        "volatility_pct": 0.7860897399042858,
+        "sharpe_ratio": 1.4238933975499932,
+        "max_drawdown_pct": -0.32139669015102595,
+        "win_rate_pct": 75.0,
+        "trading_days": 252,
+        "spy_total_return_pct": 16.13977294865665,
+        "spy_sharpe_ratio": 0.8873866987185367,
+        "total_trades": 8,
+        "profit_factor": 4.506196759863526
+      }
+    },
+    {
+      "id": "bt_014",
+      "timestamp": "2026-04-06T10:48:38.227379",
+      "git_commit": "c18739f",
+      "git_branch": "p2/signals-expansion",
+      "comment": "P2-S1: +5 primary signals (stoch, vol_breakout, obv, roc, vwap) \u2014 no retrain",
+      "tags": [
+        "p2_signals_expansion",
+        "p2_s1"
+      ],
+      "params": {
+        "universe": "medium",
+        "model_name": "2026-04-05",
+        "start_date": "2025-04-06",
+        "end_date": "2026-04-06",
+        "confidence_threshold": 0.5,
+        "max_holding_days": 5,
+        "initial_cash": 100000,
+        "n_tickers": 174,
+        "run_dir": "runs/20260406_103421",
+        "regime_gating": true,
+        "earnings_filter": true,
+        "profit_target": 0.04,
+        "stop_loss": 0.025,
+        "sector_cap": 2,
+        "correlation_limit": 0.7
+      },
+      "metrics": {
+        "total_return_pct": 4.301805426996119,
+        "annualized_return_pct": 4.3168924868393965,
+        "volatility_pct": 2.1469061218511585,
+        "sharpe_ratio": 2.010750466870521,
+        "max_drawdown_pct": -0.9318423716673189,
+        "win_rate_pct": 67.64705882352942,
+        "trading_days": 250,
+        "spy_total_return_pct": 30.530280503518693,
+        "spy_sharpe_ratio": 1.8645232557423481,
+        "total_trades": 34,
+        "profit_factor": 4.1902951984747645
+      }
+    },
+    {
+      "id": "bt_015",
+      "timestamp": "2026-04-06T11:04:25.769828",
+      "git_commit": "c18739f",
+      "git_branch": "p2/signals-expansion",
+      "comment": "P2-S1: +5 primary signals (stoch, vol_breakout, obv, roc, vwap) \u2014 no retrain",
+      "tags": [
+        "p2_signals_expansion",
+        "p2_s1"
+      ],
+      "params": {
+        "universe": "medium",
+        "start_date": "2025-04-06",
+        "end_date": "2026-04-06",
+        "confidence_threshold": 0.5,
+        "regime_gating": true,
+        "earnings_filter": true,
+        "sector_cap": 2,
+        "correlation_limit": 0.7,
+        "run_dir": "runs/20260406_103421"
+      },
+      "metrics": {
+        "total_return_pct": 4.301805426996119,
+        "annualized_return_pct": 4.3168924868393965,
+        "volatility_pct": 2.1469061218511585,
+        "sharpe_ratio": 2.010750466870521,
+        "max_drawdown_pct": -0.9318423716673189,
+        "win_rate_pct": 67.64705882352942,
+        "trading_days": 250,
+        "spy_total_return_pct": 30.530280503518693,
+        "spy_sharpe_ratio": 1.8645232557423481,
+        "total_trades": 34,
+        "profit_factor": 4.1902951984747645
+      }
+    },
+    {
+      "id": "bt_016",
+      "timestamp": "2026-04-06T14:12:35.916912",
+      "git_commit": "072c08a",
+      "git_branch": "p2/signals-expansion",
+      "comment": "P2-S2: large universe (332 tickers) retrain, 112k samples, +5 signals",
+      "tags": [
+        "p2_signals_expansion",
+        "p2_s2",
+        "large_universe"
+      ],
+      "params": {
+        "universe": "large",
+        "model_name": "2026-04-06",
+        "start_date": "2025-04-06",
+        "end_date": "2026-04-06",
+        "confidence_threshold": 0.5,
+        "max_holding_days": 5,
+        "initial_cash": 100000,
+        "n_tickers": 350,
+        "run_dir": "runs/20260406_134140",
+        "regime_gating": true,
+        "earnings_filter": true,
+        "profit_target": 0.04,
+        "stop_loss": 0.025,
+        "sector_cap": 2,
+        "correlation_limit": 0.7
+      },
+      "metrics": {
+        "total_return_pct": -0.9156028850126008,
+        "annualized_return_pct": -0.9187326377455896,
+        "volatility_pct": 1.467610561164421,
+        "sharpe_ratio": -0.6260057416162605,
+        "max_drawdown_pct": -1.4647966383506765,
+        "win_rate_pct": 20.0,
+        "trading_days": 250,
+        "spy_total_return_pct": 30.530280503518693,
+        "spy_sharpe_ratio": 1.8645232557423481,
+        "total_trades": 5,
+        "profit_factor": 0.4809984813961142
+      }
+    },
+    {
+      "id": "bt_017",
+      "timestamp": "2026-04-06T18:55:11.425327",
+      "git_commit": "072c08a",
+      "git_branch": "p2/signals-expansion",
+      "comment": "P2-S2: medium model (v3) scanning large universe (332 tickers) + 9 signals",
+      "tags": [
+        "p2_signals_expansion",
+        "p2_s2",
+        "large_universe"
+      ],
+      "params": {
+        "universe": "large",
+        "model_name": "2026-04-05",
+        "start_date": "2025-04-06",
+        "end_date": "2026-04-06",
+        "confidence_threshold": 0.5,
+        "max_holding_days": 5,
+        "initial_cash": 100000,
+        "n_tickers": 350,
+        "run_dir": "runs/20260406_182820",
+        "regime_gating": true,
+        "earnings_filter": true,
+        "profit_target": 0.04,
+        "stop_loss": 0.025,
+        "sector_cap": 2,
+        "correlation_limit": 0.7
+      },
+      "metrics": {
+        "total_return_pct": 6.6674814588315146,
+        "annualized_return_pct": 6.691127541955955,
+        "volatility_pct": 2.70841926360514,
+        "sharpe_ratio": 2.4704917853262813,
+        "max_drawdown_pct": -0.8440851926606143,
+        "win_rate_pct": 68.96551724137932,
+        "trading_days": 250,
+        "spy_total_return_pct": 30.530280503518693,
+        "spy_sharpe_ratio": 1.8645232557423481,
+        "total_trades": 58,
+        "profit_factor": 3.22408362653117
+      }
+    }
+  ]
+}
