@@ -28,6 +28,7 @@ class Position:
     entry_price: float
     entry_date: pd.Timestamp
     current_price: float = 0.0
+    max_holding_days: Optional[int] = None  # Per-position override (P2-10)
 
     @property
     def market_value(self) -> float:
@@ -117,6 +118,16 @@ class Strategy(ABC):
         Called by the backtester immediately after generate_signals(). Return
         an empty dict to use the backtester's global position_size for all
         tickers. Strategies that support confidence-based sizing override this.
+        """
+        return {}
+
+    def get_position_holding_days(self, signals: dict[str, "Signal"]) -> dict[str, int]:
+        """
+        Optional: return per-ticker maximum holding periods in trading days.
+
+        Called by the backtester immediately after generate_signals(). Return
+        an empty dict to use the backtester's global max_holding_days for all
+        tickers. Strategies implementing P2-10 asymmetric holding override this.
         """
         return {}
 

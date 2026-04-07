@@ -74,6 +74,8 @@ class MetalabelingStrategy(Strategy):
         self._indicator_cache: dict[str, pd.DataFrame] = {}
         # Populated during generate_signals(); read by get_position_sizes()
         self._last_confidences: dict[str, float] = {}
+        # Source indicators for BUY signals; read by get_position_holding_days()
+        self._last_source_indicators: dict[str, list[str]] = {}
 
     @property
     def name(self) -> str:
@@ -114,6 +116,7 @@ class MetalabelingStrategy(Strategy):
         """
         signals = {}
         self._last_confidences = {}
+        self._last_source_indicators = {}
 
         # Separate tradeable stocks from context ETFs
         context_tickers_set = set(self.context_tickers)
@@ -189,6 +192,7 @@ class MetalabelingStrategy(Strategy):
                 if confidence >= effective_threshold:
                     if primary_signal.value == 1:
                         signals[ticker] = Signal.BUY
+                        self._last_source_indicators[ticker] = source_indicators
                     elif primary_signal.value == -1:
                         signals[ticker] = Signal.SELL
 
@@ -218,6 +222,36 @@ class MetalabelingStrategy(Strategy):
                 scale = max(0.5, min(confidence / self.confidence_threshold, 2.0))
                 sizes[ticker] = self.base_position_size * scale
         return sizes
+
+    # Holding period (in trading days) by signal type (P2-10)
+    _MOMENTUM_SIGNALS = {"sma_crossover", "volume_breakout", "roc_reversal"}
+    _REVERSION_SIGNALS = {"rsi_oversold", "rsi_overbought", "bb_lower", "bb_upper", "vwap_cross"}
+    # Everything else (macd_crossover, stoch_crossover, obv_cross, …) → 5 days
+
+    def get_position_holding_days(self, signals: dict[str, "Signal"]) -> dict[str, int]:
+        """
+        Return asymmetric holding periods based on the primary signal type.
+
+        Mean-reversion signals exit quickly before the snap-back fades.
+        Momentum and neutral signals use 5 days (matching training labels).
+        Extending momentum beyond 5 days risks holding past the triple-barrier
+        horizon that the model was trained on.
+
+        Classification (trading days):
+          - Mean-reversion (rsi_*, bb_*, vwap_cross)                → 3
+          - Momentum (sma_crossover, volume_breakout, roc_reversal) → 5
+          - Neutral / mixed (macd_crossover, stoch_crossover, …)    → 5
+        """
+        holding_days: dict[str, int] = {}
+        for ticker, signal in signals.items():
+            if signal != Signal.BUY:
+                continue
+            indicators = self._last_source_indicators.get(ticker, [])
+            if any(ind in self._REVERSION_SIGNALS for ind in indicators):
+                holding_days[ticker] = 3
+            else:
+                holding_days[ticker] = 5
+        return holding_days
 
     def get_signal_details(
         self, data: dict[str, pd.DataFrame]
