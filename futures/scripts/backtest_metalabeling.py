@@ -726,6 +726,16 @@ def main():
         help="Confidence threshold for trade signals (default: 0.60)",
     )
     parser.add_argument(
+        "--start-date",
+        type=str,
+        default=None,
+        help=(
+            "Override backtest start date (YYYY-MM-DD). "
+            "Useful for testing over longer windows. "
+            "Must be after the model's embargo end date."
+        ),
+    )
+    parser.add_argument(
         "--register",
         action="store_true",
         help="Record this run in the backtest registry (backtest_registry.json)",
@@ -837,6 +847,20 @@ def main():
         else:
             test_start = test_start_intended
             print(f"\n  WARNING: Cannot validate train/test separation (no date metadata)")
+
+    # --start-date override (validate against embargo)
+    if args.start_date:
+        user_start = pd.Timestamp(args.start_date)
+        embargo_ts = pd.Timestamp(embargo_end) if embargo_end else None
+        training_ts = pd.Timestamp(training_end) if training_end else None
+        floor = max(t for t in [embargo_ts, training_ts] if t is not None) if (embargo_ts or training_ts) else None
+        if floor is not None and user_start <= floor:
+            print(f"\n  WARNING: --start-date {user_start.date()} is before embargo/training end ({floor.date()})")
+            print(f"  Clamping to {(floor + pd.Timedelta(days=1)).date()}")
+            test_start = floor + pd.Timedelta(days=1)
+        else:
+            test_start = user_start
+            print(f"\n  --start-date override: starting from {test_start.date()}")
 
     print(f"\nBacktest period: {test_start.date()} to {end_date.date()}")
 

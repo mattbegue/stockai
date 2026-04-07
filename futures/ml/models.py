@@ -140,6 +140,26 @@ class ModelWrapper(ABC):
 
         return self.model.predict(X)
 
+    def predict_proba_raw(self, feature_set: FeatureSet) -> np.ndarray:
+        """Get raw (uncalibrated) probabilities directly from the base model.
+
+        Use this when you need the model's native probability output before any
+        calibration step — e.g., for ensemble late-fusion where calibration is
+        applied to the averaged aggregate, not to individual sub-models.
+
+        Returns:
+            Array of shape (n_samples, 2) with raw class probabilities.
+        """
+        if not self.is_fitted:
+            raise ValueError("Model must be fitted before prediction")
+        if not hasattr(self.model, "predict_proba"):
+            raise ValueError("Model does not support probability predictions")
+
+        X = feature_set.X.values
+        if self.scale_features:
+            X = self.scaler.transform(X)
+        return self.model.predict_proba(X)
+
     def predict_proba(self, feature_set: FeatureSet) -> np.ndarray:
         """Get prediction probabilities, routed through calibration if fitted.
 
@@ -313,14 +333,19 @@ class LogisticRegressionModel(ModelWrapper):
 
     def _create_model(self) -> LogisticRegression:
         solver = "saga" if self.penalty in ["l1", "elasticnet"] else "lbfgs"
-        return LogisticRegression(
-            C=self.C,
-            penalty=self.penalty,
-            max_iter=self.max_iter,
-            solver=solver,
-            random_state=self.random_state,
-            n_jobs=-1,
-        )
+        kwargs: dict = {
+            "C": self.C,
+            "max_iter": self.max_iter,
+            "solver": solver,
+            "random_state": self.random_state,
+        }
+        # sklearn 1.8 deprecated the penalty kwarg for l2 (the default);
+        # only pass it when non-default to avoid FutureWarning.
+        if self.penalty not in ("l2", None):
+            kwargs["penalty"] = self.penalty
+        elif self.penalty is None:
+            kwargs["C"] = 1e9  # effectively no regularization
+        return LogisticRegression(**kwargs)
 
     def get_top_features(self, n: int = 10) -> list[tuple[str, float]]:
         """Get top N features by absolute coefficient value."""
@@ -376,7 +401,78 @@ class EnsembleModel(ModelWrapper):
             avg_proba = probas.mean(axis=0)
             return np.argmax(avg_proba, axis=1) - 1  # Assuming classes are -1, 0, 1
 
+    def calibrate(self, feature_set: FeatureSet, method: str = "isotonic") -> "EnsembleModel":
+        """Calibrate the ensemble using late-fusion: average raw probs, calibrate once.
+
+        Sub-models are NOT individually calibrated. Instead, their raw probability
+        outputs are averaged, and a single isotonic (or sigmoid) curve is fitted
+        on that aggregate. This avoids the shape-mismatch problem that arises
+        when each model has a different calibration curve (e.g., RF's narrow
+        step-function vs GBM's smoother range) and then gets averaged.
+
+        Args:
+            feature_set: Held-out calibration data (distinct from training data).
+            method: 'isotonic' (default) or 'sigmoid'.
+
+        Returns:
+            self for method chaining
+        """
+        if feature_set.y is None:
+            raise ValueError("Calibration FeatureSet must have labels (y)")
+
+        # Average raw (uncalibrated) probs across all sub-models
+        raw_probas = np.array([m.predict_proba_raw(feature_set) for m in self.models])
+        avg_pos_probs = raw_probas.mean(axis=0)[:, 1]
+        y = feature_set.y.values
+
+        if method == "isotonic":
+            calibrator = IsotonicRegression(out_of_bounds="clip")
+            calibrator.fit(avg_pos_probs, y)
+        else:
+            calibrator = LogisticRegression(C=1.0, max_iter=1000)
+            calibrator.fit(avg_pos_probs.reshape(-1, 1), y)
+
+        self._calibrator = calibrator
+        self._calibration_method = method
+        self.is_calibrated = True
+        return self
+
     def predict_proba(self, feature_set: FeatureSet) -> np.ndarray:
-        """Get averaged probabilities from all models."""
-        probas = np.array([m.predict_proba(feature_set) for m in self.models])
-        return probas.mean(axis=0)
+        """Average raw sub-model probs, then apply ensemble-level calibration if fitted."""
+        raw_probas = np.array([m.predict_proba_raw(feature_set) for m in self.models])
+        avg_proba = raw_probas.mean(axis=0)
+
+        if not self.is_calibrated:
+            return avg_proba
+
+        pos_probs = avg_proba[:, 1]
+        if self._calibration_method == "isotonic":
+            cal_probs = self._calibrator.transform(pos_probs)
+        else:
+            cal_probs = self._calibrator.predict_proba(pos_probs.reshape(-1, 1))[:, 1]
+
+        return np.column_stack([1.0 - cal_probs, cal_probs])
+
+    def get_top_features(self, n: int = 10) -> list[tuple[str, float]]:
+        """Average feature importances across sub-models that support it."""
+        importance_maps: list[dict[str, float]] = []
+        for model in self.models:
+            top = model.get_top_features(n=999)  # get all
+            if top:
+                importance_maps.append(dict(top))
+
+        if not importance_maps:
+            return []
+
+        # Union of all feature names, average across models that have the feature
+        all_names = set()
+        for m in importance_maps:
+            all_names.update(m.keys())
+
+        averaged: dict[str, float] = {}
+        for name in all_names:
+            vals = [m[name] for m in importance_maps if name in m]
+            averaged[name] = sum(vals) / len(vals)
+
+        sorted_feats = sorted(averaged.items(), key=lambda x: x[1], reverse=True)
+        return sorted_feats[:n]

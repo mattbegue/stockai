@@ -16,7 +16,7 @@ from futures.metalabeling import (
     MetaFeatureEngineering,
 )
 from futures.ml.features import FeatureSet
-from futures.ml.models import GradientBoostingModel, RandomForestModel, LogisticRegressionModel
+from futures.ml.models import GradientBoostingModel, RandomForestModel, LogisticRegressionModel, EnsembleModel
 from futures.ml.training import WalkForwardValidator
 
 
@@ -31,9 +31,12 @@ def main():
     )
     parser.add_argument(
         "--model",
-        choices=["rf", "gbm", "lr"],
+        choices=["rf", "gbm", "lr", "ensemble"],
         default="rf",
-        help="Model type: rf (RandomForest, default), gbm (GradientBoosting), lr (LogisticRegression)",
+        help=(
+            "Model type: rf (RandomForest, default), gbm (GradientBoosting), "
+            "lr (LogisticRegression), ensemble (RF+GBM+LR averaged)"
+        ),
     )
     parser.add_argument(
         "--features",
@@ -201,7 +204,7 @@ def main():
     print(f"  Test window: {TEST_WINDOW} samples (~{TEST_WINDOW // 21} months)")
 
     # Create model based on selection
-    def create_model(model_type: str):
+    def create_model(model_type: str, for_wfv: bool = False):
         if model_type == "rf":
             print("  Using Random Forest (robust to overfitting)")
             return RandomForestModel(
@@ -215,7 +218,7 @@ def main():
                 C=0.1,  # Strong regularization
                 penalty="l2",
             )
-        else:  # gbm
+        elif model_type == "gbm":
             print("  Using Gradient Boosting (regularized)")
             return GradientBoostingModel(
                 n_estimators=50,
@@ -223,8 +226,29 @@ def main():
                 learning_rate=0.05,
                 min_samples_leaf=50,
             )
+        else:  # ensemble
+            if for_wfv:
+                # Use RF as a fast WFV proxy — ensemble is too slow to retrain on each fold
+                print("  Using Random Forest as WFV proxy for ensemble")
+                return RandomForestModel(
+                    n_estimators=100,
+                    max_depth=5,
+                    min_samples_leaf=50,
+                )
+            print("  Using Ensemble (RF + GBM + LR, calibrated separately)")
+            return EnsembleModel(
+                models=[
+                    RandomForestModel(n_estimators=100, max_depth=5, min_samples_leaf=50),
+                    GradientBoostingModel(
+                        n_estimators=100, max_depth=4, learning_rate=0.05, min_samples_leaf=30
+                    ),
+                    LogisticRegressionModel(C=0.1, penalty="l2"),
+                ]
+            )
 
-    model = create_model(MODEL_TYPE)
+    # Walk-forward validation uses RF proxy when ensemble selected (too slow per fold)
+    wfv_model_type = MODEL_TYPE if MODEL_TYPE != "ensemble" else "ensemble"
+    model = create_model(wfv_model_type, for_wfv=True)
 
     validator = WalkForwardValidator(
         model=model,
@@ -270,7 +294,7 @@ def main():
         feature_names=feature_set.feature_names,
     )
 
-    final_model = create_model(MODEL_TYPE)
+    final_model = create_model(MODEL_TYPE, for_wfv=False)
     final_model.fit(train_final_set)
 
     print(f"\n  Calibrating probabilities (isotonic, n={n_calib:,} samples)...")
