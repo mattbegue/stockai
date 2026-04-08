@@ -155,6 +155,30 @@ def main():
     feature_matrix = feature_matrix.fillna(0)
     labels = train_labeled_df["label"].values
 
+    # P2-8 lesson: macro/credit/dollar/breadth/seasonality features belong in
+    # regime gating (MarketRegimeClassifier), not in the per-signal ML model.
+    # They are correlated with regime but hurt OOS signal discrimination.
+    # Exclude them before feature selection so the selector never picks them up.
+    MACRO_FEATURES_EXCLUDE = {
+        # Credit spread (HYG vs LQD) — regime indicator, not signal predictor
+        "hyg_lqd_spread_10d", "hyg_lqd_spread_20d", "hyg_percentile",
+        # Dollar strength — macro headwind, captured by regime gating
+        "uup_return_10d", "uup_percentile",
+        # Commodity ratios — growth proxy, not per-signal edge
+        "uso_gld_ratio_20d", "gld_return_10d",
+        # Market breadth — regime-level, not signal-level
+        "risk_breadth", "defensive_breadth", "breadth_net",
+        # Seasonality — too coarse to discriminate individual signals
+        "month", "is_quarter_end", "is_tax_selling_season",
+        "is_january_effect", "is_summer",
+    }
+    excluded = [c for c in feature_matrix.columns if c in MACRO_FEATURES_EXCLUDE]
+    if excluded:
+        print(f"\n  Excluding {len(excluded)} macro/regime features from selection pool:")
+        for f in excluded:
+            print(f"    - {f}")
+        feature_matrix = feature_matrix.drop(columns=excluded)
+
     # Create FeatureSet
     feature_set = FeatureSet(
         X=feature_matrix,
@@ -163,7 +187,7 @@ def main():
     )
 
     print(f"Feature matrix shape: {feature_matrix.shape}")
-    print(f"Features: {len(feature_set.feature_names)}")
+    print(f"Features available for selection: {len(feature_set.feature_names)}")
 
     # Feature selection: train a quick model to get importance, then select top N.
     # IMPORTANT: fit only on the first TRAIN_WINDOW samples so feature selection
