@@ -37,7 +37,14 @@ env/
 
 # Project specific
 data/*.db
+data/earnings_cache/
+data/earnings_surprise_cache/
 .env
+
+# Generated outputs
+models/*.pkl
+runs/
+paper_trading/
 
 # OS
 .DS_Store

@@ -6,7 +6,7 @@ from typing import Optional, Any
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, ExtraTreesClassifier
 from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
@@ -263,6 +263,43 @@ class RandomForestModel(ModelWrapper):
 
     def _create_model(self) -> RandomForestClassifier:
         return RandomForestClassifier(
+            n_estimators=self.n_estimators,
+            max_depth=self.max_depth,
+            min_samples_leaf=self.min_samples_leaf,
+            random_state=self.random_state,
+            n_jobs=-1,
+        )
+
+
+class ExtraTreesModel(ModelWrapper):
+    """Extra Randomized Trees classifier for trading signals.
+
+    Splits on random thresholds rather than optimal ones, which produces
+    wider probability distributions than standard RF. This addresses the
+    probability compression problem when no single feature dominates — RF
+    requires one feature to be overwhelmingly predictive to produce leaf
+    purity above 0.60; Extra Trees can spread probabilities more freely.
+
+    Pair with Platt (sigmoid) calibration rather than isotonic, which
+    produces step-functions that re-compress probabilities into discrete bands.
+    """
+
+    def __init__(
+        self,
+        n_estimators: int = 100,
+        max_depth: Optional[int] = 10,
+        min_samples_leaf: int = 20,
+        scale_features: bool = True,
+        random_state: int = 42,
+    ):
+        super().__init__(scale_features=scale_features)
+        self.n_estimators = n_estimators
+        self.max_depth = max_depth
+        self.min_samples_leaf = min_samples_leaf
+        self.random_state = random_state
+
+    def _create_model(self) -> ExtraTreesClassifier:
+        return ExtraTreesClassifier(
             n_estimators=self.n_estimators,
             max_depth=self.max_depth,
             min_samples_leaf=self.min_samples_leaf,

@@ -16,7 +16,13 @@ from futures.metalabeling import (
     MetaFeatureEngineering,
 )
 from futures.ml.features import FeatureSet
-from futures.ml.models import GradientBoostingModel, RandomForestModel, LogisticRegressionModel, EnsembleModel
+from futures.ml.models import (
+    GradientBoostingModel,
+    RandomForestModel,
+    LogisticRegressionModel,
+    ExtraTreesModel,
+    EnsembleModel,
+)
 from futures.ml.training import WalkForwardValidator
 
 
@@ -31,7 +37,7 @@ def main():
     )
     parser.add_argument(
         "--model",
-        choices=["rf", "gbm", "lr", "ensemble"],
+        choices=["rf", "gbm", "lr", "et", "ensemble"],
         default="rf",
         help=(
             "Model type: rf (RandomForest, default), gbm (GradientBoosting), "
@@ -43,6 +49,17 @@ def main():
         type=int,
         default=10,
         help="Number of top features to use (0 = use all)",
+    )
+    parser.add_argument(
+        "--no-calibrate",
+        action="store_true",
+        help="Skip probability calibration (use raw model probabilities)",
+    )
+    parser.add_argument(
+        "--lr-C",
+        type=float,
+        default=0.1,
+        help="Logistic Regression regularization strength (default: 0.1, higher = less regularization)",
     )
     parser.add_argument(
         "--train-end-date",
@@ -73,6 +90,7 @@ def main():
     # Model settings from arguments
     TOP_N_FEATURES = args.features if args.features > 0 else None
     MODEL_TYPE = args.model
+    LR_C = args.lr_C
 
     settings = get_settings()
     universe = get_universe(args.universe)
@@ -237,10 +255,17 @@ def main():
                 min_samples_leaf=50,
             )
         elif model_type == "lr":
-            print("  Using Logistic Regression (simple, interpretable)")
+            print(f"  Using Logistic Regression (C={LR_C})")
             return LogisticRegressionModel(
-                C=0.1,  # Strong regularization
+                C=LR_C,
                 penalty="l2",
+            )
+        elif model_type == "et":
+            print("  Using Extra Trees (random splits → wider probability distributions)")
+            return ExtraTreesModel(
+                n_estimators=100,
+                max_depth=5,
+                min_samples_leaf=50,
             )
         elif model_type == "gbm":
             print("  Using Gradient Boosting (regularized)")
@@ -321,9 +346,16 @@ def main():
     final_model = create_model(MODEL_TYPE, for_wfv=False)
     final_model.fit(train_final_set)
 
-    print(f"\n  Calibrating probabilities (isotonic, n={n_calib:,} samples)...")
-    final_model.calibrate(calib_set, method="isotonic")
-    print("  Calibration complete.")
+    # ET uses Platt (sigmoid) calibration — isotonic produces step-functions that
+    # re-compress probabilities into discrete bands, defeating ET's wider distributions.
+    calib_method = "sigmoid" if MODEL_TYPE == "et" else "isotonic"
+    if args.no_calibrate:
+        print("\n  Skipping calibration (--no-calibrate flag set).")
+        calib_method = "none"
+    else:
+        print(f"\n  Calibrating probabilities ({calib_method}, n={n_calib:,} samples)...")
+        final_model.calibrate(calib_set, method=calib_method)
+        print("  Calibration complete.")
 
     # Feature importance (from base model before calibration wrapping)
     print("\nTop 15 most important features:")
@@ -349,8 +381,8 @@ def main():
         "n_features": len(feature_set.feature_names),
         "model_type": MODEL_TYPE,
         "top_n_features": TOP_N_FEATURES,
-        "is_calibrated": True,
-        "calibration_method": "isotonic",
+        "is_calibrated": not args.no_calibrate,
+        "calibration_method": calib_method,
         "calibration_frac": CALIB_FRAC,
         "universe_tradeable": universe.tradeable,
         "universe_context": universe.context,
