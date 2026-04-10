@@ -45,6 +45,7 @@ data/earnings_surprise_cache/
 models/*.pkl
 runs/
 paper_trading/
+paper_trading_pead/positions.csv
 
 # OS
 .DS_Store
